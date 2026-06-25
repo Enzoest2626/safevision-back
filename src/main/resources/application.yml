@@ -1,0 +1,21 @@
+spring:
+  application:
+    name: safevision-back
+  profiles:
+    active: dev
+
+server:
+  port: ${SERVER_PORT:8080}
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: alpha
+    tags-sorter: alpha
+
+logging:
+  level:
+    com.safevision: DEBUG
+    org.springframework.r2dbc: DEBUG

@@ -1,0 +1,18 @@
+spring:
+  r2dbc:
+    url: ${SPRING_R2DBC_URL:r2dbc:postgresql://localhost:5432/safevision}
+    username: ${SPRING_R2DBC_USERNAME:safevision}
+    password: ${SPRING_R2DBC_PASSWORD:}
+
+telegram:
+  bot-token: ${TELEGRAM_BOT_TOKEN:}
+  chat-id: ${TELEGRAM_CHAT_ID:}
+
+hikvision:
+  base-url: ${HIKVISION_BASE_URL:}
+  username: ${HIKVISION_USERNAME:}
+  password: ${HIKVISION_PASSWORD:}
+
+app:
+  security:
+    alert-service-token: ${ALERT_SERVICE_TOKEN:dev-token}

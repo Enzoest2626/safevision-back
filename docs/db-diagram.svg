@@ -1,0 +1,269 @@
+<svg viewBox="0 0 1080 760" xmlns="http://www.w3.org/2000/svg"
+     font-family="'Segoe UI', system-ui, sans-serif" font-size="11.5"
+     role="img" width="1080" height="760">
+  <title>SafeVision — Database Schema</title>
+
+  <defs>
+    <marker id="fk-arrow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 Z" fill="#f97316"/>
+    </marker>
+  </defs>
+
+  <!-- background -->
+  <rect width="1080" height="760" fill="#0f172a"/>
+
+  <!-- ════════════════════════════════════════════════
+       SITES
+  ═════════════════════════════════════════════════ -->
+  <rect x="20" y="20" width="215" height="175" rx="5" fill="#1e293b" stroke="#3b82f6" stroke-width="2"/>
+  <rect x="20" y="20" width="215" height="30" rx="5" fill="#3b82f6"/>
+  <rect x="20" y="44"  width="215" height="6"  fill="#3b82f6"/>
+  <text x="127" y="41" text-anchor="middle" fill="#ffffff" font-weight="700" font-size="13">sites</text>
+
+  <rect x="28" y="60" width="16" height="10" rx="2" fill="#fbbf24"/>
+  <text x="36" y="68" text-anchor="middle" fill="#0f172a" font-size="8.5" font-weight="700">PK</text>
+  <text x="50" y="68" fill="#e2e8f0">id           UUID</text>
+
+  <text x="28" y="84" fill="#e2e8f0">   name         VARCHAR(100)</text>
+  <text x="28" y="99" fill="#e2e8f0">   location     VARCHAR(200)</text>
+  <text x="28" y="114" fill="#e2e8f0">   active       BOOLEAN</text>
+
+  <line x1="28" y1="121" x2="227" y2="121" stroke="#334155" stroke-width="1" stroke-dasharray="3,2"/>
+
+  <text x="28" y="136" fill="#64748b">   created_at   TIMESTAMP</text>
+  <text x="28" y="151" fill="#64748b">   created_by   VARCHAR(100)</text>
+  <text x="28" y="166" fill="#64748b">   updated_at   TIMESTAMP</text>
+  <text x="28" y="181" fill="#64748b">   updated_by   VARCHAR(100)</text>
+
+  <!-- ════════════════════════════════════════════════
+       CAMERAS
+  ═════════════════════════════════════════════════ -->
+  <rect x="265" y="20" width="230" height="207" rx="5" fill="#1e293b" stroke="#3b82f6" stroke-width="2"/>
+  <rect x="265" y="20" width="230" height="30" rx="5" fill="#3b82f6"/>
+  <rect x="265" y="44"  width="230" height="6"  fill="#3b82f6"/>
+  <text x="380" y="41" text-anchor="middle" fill="#ffffff" font-weight="700" font-size="13">cameras</text>
+
+  <rect x="273" y="60" width="16" height="10" rx="2" fill="#fbbf24"/>
+  <text x="281" y="68" text-anchor="middle" fill="#0f172a" font-size="8.5" font-weight="700">PK</text>
+  <text x="295" y="68" fill="#e2e8f0">id         UUID</text>
+
+  <rect x="273" y="75" width="16" height="10" rx="2" fill="#f97316"/>
+  <text x="281" y="83" text-anchor="middle" fill="#ffffff" font-size="8.5" font-weight="700">FK</text>
+  <text x="295" y="83" fill="#e2e8f0">site_id    UUID</text>
+
+  <text x="273" y="99"  fill="#e2e8f0">   code       VARCHAR(50)</text>
+  <text x="273" y="114" fill="#e2e8f0">   name       VARCHAR(100)</text>
+  <text x="273" y="129" fill="#e2e8f0">   ip_address VARCHAR(50)</text>
+  <text x="273" y="144" fill="#e2e8f0">   rtsp_url   VARCHAR(300)</text>
+  <text x="273" y="159" fill="#e2e8f0">   active     BOOLEAN</text>
+
+  <line x1="273" y1="166" x2="487" y2="166" stroke="#334155" stroke-width="1" stroke-dasharray="3,2"/>
+
+  <text x="273" y="181" fill="#64748b">   created_at / created_by</text>
+  <text x="273" y="196" fill="#64748b">   updated_at / updated_by</text>
+  <text x="273" y="211" fill="#64748b">   (TIMESTAMP / VARCHAR)</text>
+
+  <!-- ════════════════════════════════════════════════
+       WORKERS
+  ═════════════════════════════════════════════════ -->
+  <rect x="525" y="20" width="230" height="223" rx="5" fill="#1e293b" stroke="#3b82f6" stroke-width="2"/>
+  <rect x="525" y="20" width="230" height="30" rx="5" fill="#3b82f6"/>
+  <rect x="525" y="44"  width="230" height="6"  fill="#3b82f6"/>
+  <text x="640" y="41" text-anchor="middle" fill="#ffffff" font-weight="700" font-size="13">workers</text>
+
+  <rect x="533" y="60" width="16" height="10" rx="2" fill="#fbbf24"/>
+  <text x="541" y="68" text-anchor="middle" fill="#0f172a" font-size="8.5" font-weight="700">PK</text>
+  <text x="555" y="68" fill="#e2e8f0">id         UUID</text>
+
+  <rect x="533" y="75" width="16" height="10" rx="2" fill="#f97316"/>
+  <text x="541" y="83" text-anchor="middle" fill="#ffffff" font-size="8.5" font-weight="700">FK</text>
+  <text x="555" y="83" fill="#e2e8f0">site_id    UUID</text>
+
+  <text x="533" y="99"  fill="#e2e8f0">   code       INTEGER</text>
+  <text x="533" y="114" fill="#e2e8f0">   first_name VARCHAR(100)</text>
+  <text x="533" y="129" fill="#e2e8f0">   last_name  VARCHAR(100)</text>
+  <text x="533" y="144" fill="#e2e8f0">   role       VARCHAR(100)</text>
+  <text x="533" y="159" fill="#e2e8f0">   active     BOOLEAN</text>
+
+  <line x1="533" y1="166" x2="747" y2="166" stroke="#334155" stroke-width="1" stroke-dasharray="3,2"/>
+
+  <text x="533" y="181" fill="#64748b">   created_at / created_by</text>
+  <text x="533" y="196" fill="#64748b">   updated_at / updated_by</text>
+  <text x="533" y="211" fill="#64748b">   (TIMESTAMP / VARCHAR)</text>
+
+  <!-- ════════════════════════════════════════════════
+       USERS
+  ═════════════════════════════════════════════════ -->
+  <rect x="785" y="20" width="270" height="223" rx="5" fill="#1e293b" stroke="#8b5cf6" stroke-width="2"/>
+  <rect x="785" y="20" width="270" height="30" rx="5" fill="#8b5cf6"/>
+  <rect x="785" y="44"  width="270" height="6"  fill="#8b5cf6"/>
+  <text x="920" y="41" text-anchor="middle" fill="#ffffff" font-weight="700" font-size="13">users</text>
+
+  <rect x="793" y="60" width="16" height="10" rx="2" fill="#fbbf24"/>
+  <text x="801" y="68" text-anchor="middle" fill="#0f172a" font-size="8.5" font-weight="700">PK</text>
+  <text x="815" y="68" fill="#e2e8f0">id               UUID</text>
+
+  <text x="793" y="84"  fill="#e2e8f0">   username         VARCHAR(100)</text>
+  <text x="793" y="99"  fill="#e2e8f0">   email            VARCHAR(200)</text>
+  <text x="793" y="114" fill="#e2e8f0">   password_hash    VARCHAR(300)</text>
+  <text x="793" y="129" fill="#e2e8f0">   role             VARCHAR(50)</text>
+  <text x="793" y="144" fill="#64748b">   telegram_chat_id VARCHAR(100)</text>
+  <text x="793" y="159" fill="#e2e8f0">   active           BOOLEAN</text>
+
+  <line x1="793" y1="166" x2="1047" y2="166" stroke="#334155" stroke-width="1" stroke-dasharray="3,2"/>
+
+  <text x="793" y="181" fill="#64748b">   created_at / created_by</text>
+  <text x="793" y="196" fill="#64748b">   updated_at / updated_by</text>
+  <text x="793" y="211" fill="#64748b">   (TIMESTAMP / VARCHAR)</text>
+
+  <!-- ════════════════════════════════════════════════
+       INCIDENTS  (pivot — center)
+  ═════════════════════════════════════════════════ -->
+  <rect x="320" y="360" width="250" height="175" rx="5" fill="#1e293b" stroke="#ef4444" stroke-width="2.5"/>
+  <rect x="320" y="360" width="250" height="30" rx="5" fill="#ef4444"/>
+  <rect x="320" y="384" width="250" height="6"  fill="#ef4444"/>
+  <text x="445" y="381" text-anchor="middle" fill="#ffffff" font-weight="700" font-size="13">incidents</text>
+
+  <rect x="328" y="400" width="16" height="10" rx="2" fill="#fbbf24"/>
+  <text x="336" y="408" text-anchor="middle" fill="#0f172a" font-size="8.5" font-weight="700">PK</text>
+  <text x="350" y="408" fill="#e2e8f0">id          UUID</text>
+
+  <rect x="328" y="415" width="16" height="10" rx="2" fill="#f97316"/>
+  <text x="336" y="423" text-anchor="middle" fill="#ffffff" font-size="8.5" font-weight="700">FK</text>
+  <text x="350" y="423" fill="#e2e8f0">worker_id   UUID</text>
+
+  <rect x="328" y="430" width="16" height="10" rx="2" fill="#f97316"/>
+  <text x="336" y="438" text-anchor="middle" fill="#ffffff" font-size="8.5" font-weight="700">FK</text>
+  <text x="350" y="438" fill="#e2e8f0">camera_id   UUID</text>
+
+  <rect x="328" y="445" width="16" height="10" rx="2" fill="#f97316"/>
+  <text x="336" y="453" text-anchor="middle" fill="#ffffff" font-size="8.5" font-weight="700">FK</text>
+  <text x="350" y="453" fill="#e2e8f0">site_id     UUID</text>
+
+  <text x="328" y="469" fill="#e2e8f0">   missing_epp TEXT[]</text>
+  <text x="328" y="484" fill="#e2e8f0">   occurred_at TIMESTAMP</text>
+  <text x="328" y="499" fill="#64748b">   created_at  TIMESTAMP</text>
+  <text x="328" y="524" fill="#475569" font-size="10" font-style="italic">   DEFAULT NOW()</text>
+
+  <!-- ════════════════════════════════════════════════
+       EVIDENCE
+  ═════════════════════════════════════════════════ -->
+  <rect x="20" y="590" width="230" height="130" rx="5" fill="#1e293b" stroke="#10b981" stroke-width="2"/>
+  <rect x="20" y="590" width="230" height="30" rx="5" fill="#10b981"/>
+  <rect x="20" y="614" width="230" height="6"  fill="#10b981"/>
+  <text x="135" y="611" text-anchor="middle" fill="#ffffff" font-weight="700" font-size="13">evidence</text>
+
+  <rect x="28" y="630" width="16" height="10" rx="2" fill="#fbbf24"/>
+  <text x="36" y="638" text-anchor="middle" fill="#0f172a" font-size="8.5" font-weight="700">PK</text>
+  <text x="50" y="638" fill="#e2e8f0">id          UUID</text>
+
+  <rect x="28" y="645" width="16" height="10" rx="2" fill="#f97316"/>
+  <text x="36" y="653" text-anchor="middle" fill="#ffffff" font-size="8.5" font-weight="700">FK</text>
+  <text x="50" y="653" fill="#e2e8f0">incident_id UUID</text>
+
+  <text x="28" y="669" fill="#e2e8f0">   frame_b64   TEXT</text>
+  <text x="28" y="684" fill="#64748b">   created_at  TIMESTAMP</text>
+  <text x="28" y="706" fill="#475569" font-size="10" font-style="italic">   DEFAULT NOW()</text>
+
+  <!-- ════════════════════════════════════════════════
+       NOTIFICATIONS
+  ═════════════════════════════════════════════════ -->
+  <rect x="280" y="575" width="255" height="163" rx="5" fill="#1e293b" stroke="#f59e0b" stroke-width="2"/>
+  <rect x="280" y="575" width="255" height="30" rx="5" fill="#f59e0b"/>
+  <rect x="280" y="599" width="255" height="6"  fill="#f59e0b"/>
+  <text x="407" y="596" text-anchor="middle" fill="#ffffff" font-weight="700" font-size="13">notifications</text>
+
+  <rect x="288" y="615" width="16" height="10" rx="2" fill="#fbbf24"/>
+  <text x="296" y="623" text-anchor="middle" fill="#0f172a" font-size="8.5" font-weight="700">PK</text>
+  <text x="310" y="623" fill="#e2e8f0">id           UUID</text>
+
+  <rect x="288" y="630" width="16" height="10" rx="2" fill="#f97316"/>
+  <text x="296" y="638" text-anchor="middle" fill="#ffffff" font-size="8.5" font-weight="700">FK</text>
+  <text x="310" y="638" fill="#e2e8f0">incident_id  UUID</text>
+
+  <text x="288" y="654" fill="#e2e8f0">   channel      VARCHAR(50)</text>
+  <text x="288" y="669" fill="#e2e8f0">   status       VARCHAR(50)</text>
+  <text x="288" y="684" fill="#64748b">   sent_at      TIMESTAMP</text>
+  <text x="288" y="699" fill="#64748b">   error_msg    TEXT</text>
+  <text x="288" y="714" fill="#64748b">   created_at   TIMESTAMP</text>
+  <text x="288" y="730" fill="#475569" font-size="10" font-style="italic">   DEFAULT NOW()</text>
+
+  <!-- ════════════════════════════════════════════════
+       EPP_PARAMETERS
+  ═════════════════════════════════════════════════ -->
+  <rect x="565" y="590" width="245" height="130" rx="5" fill="#1e293b" stroke="#8b5cf6" stroke-width="2"/>
+  <rect x="565" y="590" width="245" height="30" rx="5" fill="#8b5cf6"/>
+  <rect x="565" y="614" width="245" height="6"  fill="#8b5cf6"/>
+  <text x="687" y="611" text-anchor="middle" fill="#ffffff" font-weight="700" font-size="13">epp_parameters</text>
+
+  <rect x="573" y="630" width="16" height="10" rx="2" fill="#fbbf24"/>
+  <text x="581" y="638" text-anchor="middle" fill="#0f172a" font-size="8.5" font-weight="700">PK</text>
+  <text x="595" y="638" fill="#e2e8f0">id           UUID</text>
+
+  <text x="573" y="654" fill="#e2e8f0">   required_epp TEXT[]</text>
+  <text x="573" y="669" fill="#64748b">   updated_at   TIMESTAMP</text>
+  <text x="573" y="684" fill="#64748b">   updated_by   VARCHAR(100)</text>
+  <text x="573" y="706" fill="#475569" font-size="10" font-style="italic">   DEFAULT NOW()</text>
+
+  <!-- ════════════════════════════════════════════════
+       FK LINES
+  ═════════════════════════════════════════════════ -->
+
+  <!-- sites.id → cameras.site_id -->
+  <path d="M 235,75 C 250,75 250,83 265,83"
+        fill="none" stroke="#f97316" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#fk-arrow)"/>
+
+  <!-- sites.id → workers.site_id -->
+  <path d="M 235,65 C 380,65 380,40 525,83"
+        fill="none" stroke="#f97316" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#fk-arrow)"/>
+
+  <!-- sites.id → incidents.site_id -->
+  <path d="M 127,195 L 127,453 L 320,453"
+        fill="none" stroke="#f97316" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#fk-arrow)"/>
+
+  <!-- cameras.id → incidents.camera_id -->
+  <path d="M 380,227 L 380,438 L 320,438"
+        fill="none" stroke="#f97316" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#fk-arrow)"/>
+
+  <!-- workers.id → incidents.worker_id -->
+  <path d="M 640,243 L 640,423 L 570,423"
+        fill="none" stroke="#f97316" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#fk-arrow)"/>
+
+  <!-- incidents.id → evidence.incident_id -->
+  <path d="M 320,453 C 190,453 190,653 250,653"
+        fill="none" stroke="#f97316" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#fk-arrow)"/>
+
+  <!-- incidents.id → notifications.incident_id -->
+  <path d="M 445,535 L 445,638 L 535,638"
+        fill="none" stroke="#f97316" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#fk-arrow)"/>
+
+  <!-- ════════════════════════════════════════════════
+       LEGEND  (bottom-right, minimal)
+  ═════════════════════════════════════════════════ -->
+  <rect x="840" y="590" width="215" height="145" rx="5" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+  <text x="947" y="610" text-anchor="middle" fill="#94a3b8" font-size="11" font-weight="600">Leyenda</text>
+  <line x1="848" y1="616" x2="1047" y2="616" stroke="#334155" stroke-width="1"/>
+
+  <rect x="855" y="625" width="16" height="10" rx="2" fill="#3b82f6"/>
+  <text x="878" y="633" fill="#e2e8f0" font-size="10.5">Datos maestros</text>
+
+  <rect x="855" y="643" width="16" height="10" rx="2" fill="#ef4444"/>
+  <text x="878" y="651" fill="#e2e8f0" font-size="10.5">Incidente (pivot)</text>
+
+  <rect x="855" y="661" width="16" height="10" rx="2" fill="#10b981"/>
+  <text x="878" y="669" fill="#e2e8f0" font-size="10.5">Evidencia</text>
+
+  <rect x="855" y="679" width="16" height="10" rx="2" fill="#f59e0b"/>
+  <text x="878" y="687" fill="#e2e8f0" font-size="10.5">Notificaciones</text>
+
+  <rect x="855" y="697" width="16" height="10" rx="2" fill="#8b5cf6"/>
+  <text x="878" y="705" fill="#e2e8f0" font-size="10.5">Config / Usuarios</text>
+
+  <line x1="855" y1="718" x2="885" y2="718" stroke="#f97316" stroke-width="1.5" stroke-dasharray="5,3"/>
+  <path d="M 878,715 L 878,721 L 885,718 Z" fill="#f97316"/>
+  <text x="893" y="722" fill="#e2e8f0" font-size="10.5">FK</text>
+
+  <rect x="855" y="727" width="16" height="10" rx="2" fill="#fbbf24"/>
+  <text x="872" y="729" text-anchor="middle" fill="#0f172a" font-size="7.5" font-weight="700">PK</text>
+  <text x="878" y="735" fill="#e2e8f0" font-size="10.5">Primary Key</text>
+</svg>

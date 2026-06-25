@@ -1,0 +1,24 @@
+# PRODUCCIÓN — nunca commitear con valores reales
+spring:
+  r2dbc:
+    url: ${SPRING_R2DBC_URL}
+    username: ${SPRING_R2DBC_USERNAME}
+    password: ${SPRING_R2DBC_PASSWORD}
+
+telegram:
+  bot-token: ${TELEGRAM_BOT_TOKEN}
+  chat-id: ${TELEGRAM_CHAT_ID}
+
+hikvision:
+  base-url: ${HIKVISION_BASE_URL}
+  username: ${HIKVISION_USERNAME}
+  password: ${HIKVISION_PASSWORD}
+
+app:
+  security:
+    alert-service-token: ${ALERT_SERVICE_TOKEN}
+
+logging:
+  level:
+    com.safevision: INFO
+    org.springframework.r2dbc: WARN
