@@ -1,0 +1,9 @@
+app:
+  security:
+    alert-service-token: test-token-safevision
+
+spring:
+  r2dbc:
+    url: r2dbc:postgresql://localhost:5432/safevision_test
+    username: test
+    password: test
