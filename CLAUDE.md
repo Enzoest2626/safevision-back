@@ -64,104 +64,60 @@ Claude **NUNCA** ejecuta automáticamente:
 | Java                 | 21 (LTS)                                                  |
 | Spring Boot          | 3.x                                                       |
 | Spring WebFlux       | Capa web reactiva (Mono / Flux)                          |
-| RxJava               | 3.x — lógica de negocio en capa de servicio             |
-| R2DBC                | Driver reactivo PostgreSQL                               |
+| Reactor              | Único stack reactivo — RxJava evaluado y descartado, ver nota abajo |
+| R2DBC                | Driver reactivo PostgreSQL (`ReactiveCrudRepository`)     |
 | PostgreSQL           | Base de datos principal (AWS RDS en producción)          |
 | SpringDoc OpenAPI    | Swagger UI — `/swagger-ui.html`                          |
 | Telegram Bot API     | Notificaciones push al supervisor                        |
-| Hikvision ISAPI      | Activación de sirena física en cámara                    |
+| Hikvision ISAPI      | Activación de sirena física en cámara (config lista, cliente HTTP pendiente) |
 | Maven                | Build tool                                               |
-| Testcontainers       | Tests de integración con PostgreSQL real                 |
+| JaCoCo               | Cobertura de tests (`mvn test` genera `target/site/jacoco/`) |
+| Checkstyle / SpotBugs | Análisis estático (`failOnViolation=false`, no bloquean el build) |
+| Testcontainers       | Dependencia agregada — aún sin tests de integración que la usen |
+
+> **Nota:** este archivo documentaba originalmente una arquitectura hexagonal
+> con RxJava en la capa de servicio. Esa capa nunca se implementó — el código
+> real usa Reactor (`Mono`/`Flux`) de punta a punta, sin `RxJava3Adapter` ni
+> conversión alguna. La sección de abajo refleja el código tal como existe.
 
 ---
 
 ## Arquitectura
 
-Arquitectura **Hexagonal (Ports & Adapters)** con capas reactivas.
+Capas planas (controller → service → repository), **no hexagonal**. Todo el
+pipeline reactivo usa Reactor puro (`Mono`/`Flux`), sin RxJava.
 
 ```
 src/main/java/com/safevision/back/
-├── adapter/
-│   ├── in/
-│   │   └── web/                    ← Controllers WebFlux
-│   │       ├── SiteController
-│   │       ├── CameraController
-│   │       ├── WorkerController
-│   │       ├── UserController
-│   │       ├── IncidentController
-│   │       ├── ReportController
-│   │       ├── NotificationController
-│   │       └── EppParameterController
-│   └── out/
-│       ├── persistence/            ← Repositorios R2DBC
-│       │   ├── SiteR2dbcRepository
-│       │   ├── CameraR2dbcRepository
-│       │   ├── WorkerR2dbcRepository
-│       │   ├── UserR2dbcRepository
-│       │   ├── IncidentR2dbcRepository
-│       │   ├── EvidenceR2dbcRepository
-│       │   ├── NotificationR2dbcRepository
-│       │   └── EppParameterR2dbcRepository
-│       ├── telegram/               ← Telegram Bot adapter
-│       │   └── TelegramNotificationAdapter
-│       └── hikvision/              ← Hikvision ISAPI adapter
-│           └── HikvisionSirenAdapter
-├── application/
-│   └── service/                    ← Casos de uso con RxJava
-│       ├── SiteService
-│       ├── CameraService
-│       ├── WorkerService
-│       ├── UserService
-│       ├── IncidentService         ← Orquesta: persiste + notifica
-│       ├── ReportService
-│       ├── NotificationService
-│       └── EppParameterService
-├── domain/
-│   ├── model/                      ← Entidades del dominio (records Java 21)
-│   │   ├── Site
-│   │   ├── Camera
-│   │   ├── Worker
-│   │   ├── User
-│   │   ├── Incident
-│   │   ├── Evidence
-│   │   ├── Notification
-│   │   └── EppParameter
-│   └── port/
-│       ├── in/                     ← Interfaces de casos de uso
-│       │   ├── ManageSiteUseCase
-│       │   ├── ManageCameraUseCase
-│       │   ├── ManageWorkerUseCase
-│       │   ├── ManageUserUseCase
-│       │   ├── RegisterIncidentUseCase
-│       │   ├── GenerateReportUseCase
-│       │   ├── ManageNotificationUseCase
-│       │   └── ManageEppParameterUseCase
-│       └── out/                    ← Interfaces de repositorios/servicios externos
-│           ├── SiteRepositoryPort
-│           ├── CameraRepositoryPort
-│           ├── WorkerRepositoryPort
-│           ├── UserRepositoryPort
-│           ├── IncidentRepositoryPort
-│           ├── EvidenceRepositoryPort
-│           ├── NotificationRepositoryPort
-│           ├── EppParameterRepositoryPort
-│           ├── AlertNotificationPort   ← Telegram
-│           └── SirenActivationPort     ← Hikvision
+├── controller/          ← REST controllers WebFlux (Mono/Flux)
+│   ├── SiteController
+│   ├── ZoneController            (anidado bajo /sites/{siteId}/zones)
+│   ├── SiteContactController     (anidado bajo /sites/{siteId}/contacts)
+│   ├── CameraController
+│   ├── WorkerController
+│   ├── UserController
+│   ├── IncidentController        ← HU10, protegido con Bearer token
+│   └── EppParameterController    ← HU04, reglas por obra (siteId)
+├── dto/                 ← Request/Response records (validación jakarta.validation)
+├── model/                ← Entidades R2DBC (records Java 21, @Table/@Id)
+│   ├── Site, Zone, Camera, Worker, User, UserRole
+│   ├── SiteContact, SiteEppRequirement, EppParameter
+│   └── Incident, Evidence, Notification, NotificationChannel, NotificationStatus
+├── repository/           ← ReactiveCrudRepository<T, Long> (R2DBC)
+├── service/              ← Lógica de negocio (Reactor puro)
+│   ├── SiteService, CameraService, WorkerService, UserService
+│   ├── ZoneService, SiteContactService, EppParameterService
+│   ├── TelegramNotificationService   ← llamada HTTP al Bot API
+│   └── IncidentService               ← orquesta: persiste + resuelve contactos + notifica
 └── config/
-    ├── OpenApiConfig               ← SpringDoc / Swagger
-    ├── SecurityConfig              ← Bearer token filter
-    ├── R2dbcConfig
-    ├── TelegramConfig
-    └── HikvisionConfig
+    ├── OpenApiConfig        ← SpringDoc / Swagger
+    ├── SecurityConfig       ← WebFilter que exige Bearer en POST /api/v1/incidents
+    ├── TelegramProperties
+    └── HikvisionProperties  ← solo config; sin cliente HTTP aún (HU09 pendiente)
 ```
 
-**Regla de dependencias:** el dominio no conoce adapters ni Spring.
-Los adapters dependen del dominio, nunca al revés.
-
-**Mezcla WebFlux + RxJava:**
-- Controllers retornan `Mono<T>` / `Flux<T>` (Reactor — requerido por WebFlux).
-- Services usan `Single<T>` / `Observable<T>` / `Completable` (RxJava 3).
-- Conversión siempre con `RxJava3Adapter`. **Nunca `.block()`.**
+**IDs:** `Long` (BIGINT `GENERATED ALWAYS AS IDENTITY`), no UUID.
+**Reactive first:** controllers y services retornan `Mono<T>`/`Flux<T>`, cero `.block()`.
 
 ---
 
@@ -176,6 +132,14 @@ Los adapters dependen del dominio, nunca al revés.
 | GET    | `/api/v1/sites/{id}`   | Detalle de obra                      |
 | PUT    | `/api/v1/sites/{id}`   | Actualizar obra                      |
 | DELETE | `/api/v1/sites/{id}`   | Desactivar obra (soft delete)        |
+| GET    | `/api/v1/sites/{siteId}/zones`             | Listar zonas de una obra             |
+| POST   | `/api/v1/sites/{siteId}/zones`             | Crear zona                           |
+| PUT    | `/api/v1/sites/{siteId}/zones/{zoneId}`    | Actualizar zona                      |
+| DELETE | `/api/v1/sites/{siteId}/zones/{zoneId}`    | Desactivar zona                      |
+| GET    | `/api/v1/sites/{siteId}/contacts`          | Listar contactos de la obra (alertas Telegram) |
+| POST   | `/api/v1/sites/{siteId}/contacts`          | Crear contacto                       |
+| PUT    | `/api/v1/sites/{siteId}/contacts/{contactId}` | Actualizar contacto                |
+| DELETE | `/api/v1/sites/{siteId}/contacts/{contactId}` | Desactivar contacto                |
 | GET    | `/api/v1/cameras`      | Listar cámaras                       |
 | POST   | `/api/v1/cameras`      | Crear cámara                         |
 | GET    | `/api/v1/cameras/{id}` | Detalle de cámara                    |
@@ -195,35 +159,29 @@ Los adapters dependen del dominio, nunca al revés.
 ### Incidentes EPP (desde módulo CV)
 
 | Método | Endpoint                  | HU    | Descripción                                      |
-|--------|---------------------------|-------|--------------------------------------------------|
-| POST   | `/api/v1/incidents`       | HU10  | Registra incidente EPP (desde módulo CV)         |
-| GET    | `/api/v1/incidents`       | HU10  | Lista incidentes (filtros: site, worker, fecha)  |
-| GET    | `/api/v1/incidents/{id}`  | HU10  | Detalle de incidente + evidencia                 |
-
-### Reportes y Estadísticas
-
-| Método | Endpoint                         | Descripción                               |
-|--------|----------------------------------|-------------------------------------------|
-| GET    | `/api/v1/reports/incidents`      | Reporte de incidentes por rango de fecha  |
-| GET    | `/api/v1/reports/summary`        | Totales y estadísticas para dashboard     |
-
-### Notificaciones
-
-| Método | Endpoint                    | Descripción                         |
-|--------|-----------------------------|-------------------------------------|
-| GET    | `/api/v1/notifications`     | Historial de notificaciones enviadas|
+|--------|---------------------------|-------|---------------------------------------------------|
+| POST   | `/api/v1/incidents`       | HU10  | Registra incidente EPP — único endpoint con Bearer token (`ALERT_SERVICE_TOKEN`) |
+| GET    | `/api/v1/incidents`       | HU10  | Lista incidentes (filtros opcionales: `siteId`, `workerId`, `from`, `to`) |
+| GET    | `/api/v1/incidents/{id}`  | HU10  | Detalle de incidente                             |
 
 ### Parámetros EPP
 
-| Método | Endpoint              | HU    | Descripción                             |
-|--------|-----------------------|-------|-----------------------------------------|
-| GET    | `/api/v1/parameters`  | HU04  | Reglas EPP activas (usado por CV)       |
-| PUT    | `/api/v1/parameters`  | HU04  | Actualizar reglas EPP                   |
+| Método | Endpoint                          | HU    | Descripción                                       |
+|--------|------------------------------------|-------|----------------------------------------------------|
+| GET    | `/api/v1/parameters/{siteId}`      | HU04  | Reglas EPP activas de una obra (fallback al catálogo completo si no tiene config propia) |
+| PUT    | `/api/v1/parameters/{siteId}`      | HU04  | Actualizar reglas EPP obligatorias de esa obra     |
 
 ### Documentación
 
 - Swagger UI: `GET /swagger-ui.html`
 - OpenAPI 3 spec: `GET /v3/api-docs`
+
+### Pendiente (documentado en las HU pero sin controller aún)
+
+- Reportes/estadísticas (`/api/v1/reports/...`) — HU12, no implementado.
+- Historial de notificaciones (`/api/v1/notifications`) — no implementado; las
+  notificaciones se persisten en la tabla `notifications` pero no hay endpoint
+  de lectura todavía.
 
 ---
 
@@ -245,17 +203,34 @@ Los adapters dependen del dominio, nunca al revés.
 ## Esquema de Base de Datos
 
 Todo en inglés. Soft delete vía columna `active`. FK entre tablas.
+IDs `BIGINT GENERATED ALWAYS AS IDENTITY` (no UUID). Fuente única de verdad:
+[`docs/init-schema.sql`](docs/init-schema.sql) — este bloque es un resumen,
+ver el archivo para el DDL completo (índices, comentarios de cada tabla).
 
-**Campos de auditoría** — presentes en tablas de datos maestros (`sites`, `cameras`, `workers`, `users`):
+**Catálogos de referencia** (`user_roles`, `notification_channels`,
+`notification_statuses`) reemplazan los `VARCHAR` inline que este documento
+describía antes — `users.role_id`, `notifications.channel_id` y
+`notifications.status_id` son FKs a esos catálogos.
+
+**Campos de auditoría** — presentes en tablas de datos maestros (`sites`, `zones`, `cameras`, `workers`, `users`, `site_contacts`, `epp_parameters`):
 - `created_at` / `updated_at` — marcas de tiempo automáticas.
 - `created_by` / `updated_by` — username del usuario que realizó la operación.
 
 Las tablas de eventos (`incidents`, `evidence`, `notifications`) son inmutables: solo tienen `created_at`.
 
 ```sql
+-- Catálogos
+CREATE TABLE user_roles (
+    id   BIGINT       PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    code VARCHAR(50)  NOT NULL UNIQUE,
+    name VARCHAR(100) NOT NULL
+);
+CREATE TABLE notification_channels (id BIGINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY, code VARCHAR(50) NOT NULL UNIQUE, name VARCHAR(100) NOT NULL);
+CREATE TABLE notification_statuses  (id BIGINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY, code VARCHAR(50) NOT NULL UNIQUE, name VARCHAR(100) NOT NULL);
+
 -- Obras / construction sites
 CREATE TABLE sites (
-    id         UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    id         BIGINT       PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     name       VARCHAR(100) NOT NULL UNIQUE,
     location   VARCHAR(200),
     active     BOOLEAN      NOT NULL DEFAULT TRUE,
@@ -265,10 +240,24 @@ CREATE TABLE sites (
     updated_by VARCHAR(100)
 );
 
+-- Zonas dentro de una obra (ej. "Piso 2", "Almacén") — agrupan cámaras
+CREATE TABLE zones (
+    id         BIGINT       PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    site_id    BIGINT       NOT NULL REFERENCES sites(id),
+    name       VARCHAR(100) NOT NULL,
+    active     BOOLEAN      NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP    NOT NULL DEFAULT NOW(),
+    created_by VARCHAR(100),
+    updated_at TIMESTAMP    NOT NULL DEFAULT NOW(),
+    updated_by VARCHAR(100),
+    UNIQUE (site_id, name)
+);
+
 -- Cámaras IP Hikvision
 CREATE TABLE cameras (
-    id         UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
-    site_id    UUID         NOT NULL REFERENCES sites(id),
+    id         BIGINT       PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    site_id    BIGINT       NOT NULL REFERENCES sites(id),
+    zone_id    BIGINT       REFERENCES zones(id),
     code       VARCHAR(50)  NOT NULL UNIQUE,
     name       VARCHAR(100),
     ip_address VARCHAR(50),
@@ -282,8 +271,8 @@ CREATE TABLE cameras (
 
 -- Trabajadores en obra
 CREATE TABLE workers (
-    id         UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
-    site_id    UUID         NOT NULL REFERENCES sites(id),
+    id         BIGINT       PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    site_id    BIGINT       NOT NULL REFERENCES sites(id),
     code       INTEGER      NOT NULL UNIQUE,
     first_name VARCHAR(100) NOT NULL,
     last_name  VARCHAR(100) NOT NULL,
@@ -295,13 +284,60 @@ CREATE TABLE workers (
     updated_by VARCHAR(100)
 );
 
--- Usuarios del sistema
+-- Usuarios del sistema (acceden al frontend; el bot de Telegram NO se
+-- vincula a usuarios individuales — ver site_contacts más abajo)
 CREATE TABLE users (
-    id               UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
-    username         VARCHAR(100) NOT NULL UNIQUE,
-    email            VARCHAR(200) NOT NULL UNIQUE,
-    password_hash    VARCHAR(300) NOT NULL,
-    role             VARCHAR(50)  NOT NULL DEFAULT 'SUPERVISOR',
+    id            BIGINT       PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    username      VARCHAR(100) NOT NULL UNIQUE,
+    email         VARCHAR(200) NOT NULL UNIQUE,
+    password_hash VARCHAR(300) NOT NULL,
+    role_id       BIGINT       NOT NULL REFERENCES user_roles(id),
+    phone         VARCHAR(20),
+    active        BOOLEAN      NOT NULL DEFAULT TRUE,
+    created_at    TIMESTAMP    NOT NULL DEFAULT NOW(),
+    created_by    VARCHAR(100),
+    updated_at    TIMESTAMP    NOT NULL DEFAULT NOW(),
+    updated_by    VARCHAR(100)
+);
+
+-- Incidentes de incumplimiento EPP (inmutable)
+CREATE TABLE incidents (
+    id          BIGINT    PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    worker_id   BIGINT    NOT NULL REFERENCES workers(id),
+    camera_id   BIGINT    NOT NULL REFERENCES cameras(id),
+    site_id     BIGINT    NOT NULL REFERENCES sites(id),
+    missing_epp TEXT[]    NOT NULL,
+    occurred_at TIMESTAMP NOT NULL,
+    created_at  TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- Evidencias visuales / frames (inmutable)
+CREATE TABLE evidence (
+    id          BIGINT    PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    incident_id BIGINT    NOT NULL REFERENCES incidents(id),
+    frame_b64   TEXT      NOT NULL,
+    created_at  TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- Historial de notificaciones (inmutable)
+CREATE TABLE notifications (
+    id          BIGINT    PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    incident_id BIGINT    NOT NULL REFERENCES incidents(id),
+    channel_id  BIGINT    NOT NULL REFERENCES notification_channels(id),
+    status_id   BIGINT    NOT NULL REFERENCES notification_statuses(id),
+    sent_at     TIMESTAMP,
+    error_msg   TEXT,
+    created_at  TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- Contactos por obra — reciben alertas Telegram al detectarse un incidente.
+-- Fallback: si la obra no tiene contactos con telegram_chat_id, se usa
+-- TELEGRAM_CHAT_ID del entorno.
+CREATE TABLE site_contacts (
+    id               BIGINT       PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    site_id          BIGINT       NOT NULL REFERENCES sites(id),
+    name             VARCHAR(100) NOT NULL,
+    phone            VARCHAR(20)  NOT NULL,
     telegram_chat_id VARCHAR(100),
     active           BOOLEAN      NOT NULL DEFAULT TRUE,
     created_at       TIMESTAMP    NOT NULL DEFAULT NOW(),
@@ -310,49 +346,36 @@ CREATE TABLE users (
     updated_by       VARCHAR(100)
 );
 
--- Incidentes de incumplimiento EPP (inmutable)
-CREATE TABLE incidents (
-    id          UUID      PRIMARY KEY DEFAULT gen_random_uuid(),
-    worker_id   UUID      NOT NULL REFERENCES workers(id),
-    camera_id   UUID      NOT NULL REFERENCES cameras(id),
-    site_id     UUID      NOT NULL REFERENCES sites(id),
-    missing_epp TEXT[]    NOT NULL,
-    occurred_at TIMESTAMP NOT NULL,
-    created_at  TIMESTAMP NOT NULL DEFAULT NOW()
-);
-
--- Evidencias visuales / frames (inmutable)
-CREATE TABLE evidence (
-    id          UUID      PRIMARY KEY DEFAULT gen_random_uuid(),
-    incident_id UUID      NOT NULL REFERENCES incidents(id),
-    frame_b64   TEXT      NOT NULL,
-    created_at  TIMESTAMP NOT NULL DEFAULT NOW()
-);
-
--- Historial de notificaciones (inmutable)
-CREATE TABLE notifications (
-    id          UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
-    incident_id UUID         NOT NULL REFERENCES incidents(id),
-    channel     VARCHAR(50)  NOT NULL,
-    status      VARCHAR(50)  NOT NULL DEFAULT 'PENDING',
-    sent_at     TIMESTAMP,
-    error_msg   TEXT,
-    created_at  TIMESTAMP    NOT NULL DEFAULT NOW()
-);
-
--- Reglas EPP configurables (global, sin FK a site)
+-- Catálogo EPP (tipos disponibles en el sistema)
 CREATE TABLE epp_parameters (
-    id           UUID      PRIMARY KEY DEFAULT gen_random_uuid(),
-    required_epp TEXT[]    NOT NULL DEFAULT '{helmet,vest,gloves}',
-    updated_at   TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_by   VARCHAR(100)
+    id         BIGINT       PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    code       VARCHAR(50)  NOT NULL UNIQUE,
+    name       VARCHAR(100) NOT NULL,
+    active     BOOLEAN      NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP    NOT NULL DEFAULT NOW(),
+    created_by VARCHAR(100),
+    updated_at TIMESTAMP    NOT NULL DEFAULT NOW(),
+    updated_by VARCHAR(100)
+);
+
+-- Qué EPP son obligatorios por obra. Sin filas para una obra => el sistema
+-- devuelve todos los EPP activos del catálogo como fallback (fail-safe).
+CREATE TABLE site_epp_requirements (
+    id               BIGINT    PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    site_id          BIGINT    NOT NULL REFERENCES sites(id),
+    epp_parameter_id BIGINT    NOT NULL REFERENCES epp_parameters(id),
+    updated_at       TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_by       VARCHAR(100),
+    UNIQUE (site_id, epp_parameter_id)
 );
 ```
 
-**Enumerados esperados:**
-- `channel`: `TELEGRAM`, `HIKVISION`
-- `status`: `PENDING`, `SENT`, `FAILED`
-- `role` (users): `ADMIN`, `SUPERVISOR`
+**Seed inicial:**
+- `user_roles`: `ADMIN`, `SUPERVISOR`
+- `notification_channels`: `TELEGRAM`, `HIKVISION`
+- `notification_statuses`: `PENDING`, `SENT`, `FAILED`
+- `epp_parameters`: `casco`, `chaleco`, `guantes`
+- `site_epp_requirements`: vacío — se configura por obra desde el frontend
 
 ---
 
@@ -363,14 +386,17 @@ CV Module
    │
    └─ POST /api/v1/incidents  (Bearer: ALERT_SERVICE_TOKEN)
          │
-         ├─ 1. Validar Bearer token
-         ├─ 2. Resolver worker_code + camera_code → UUIDs (JOIN a BD)
+         ├─ 1. Validar Bearer token (WebFilter en SecurityConfig)
+         ├─ 2. Resolver worker_code + camera_code + site_name → IDs (JOIN a BD)
          ├─ 3. Persistir en `incidents`
          ├─ 4. Persistir frame en `evidence`
-         ├─ 5. TelegramNotificationAdapter → Telegram Bot API
-         ├─ 6. HikvisionSirenAdapter → Hikvision ISAPI
-         └─ 7. Persistir en `notifications` (SENT / FAILED por canal)
+         ├─ 5. Resolver contactos de la obra (site_contacts, fallback a TELEGRAM_CHAT_ID)
+         ├─ 6. TelegramNotificationService → Telegram Bot API (por cada contacto)
+         └─ 7. Persistir en `notifications` (SENT / FAILED por contacto)
 ```
+
+> Hikvision ISAPI (activación de sirena, HU09) aún no está integrado en este
+> flujo — solo existe `HikvisionProperties` como configuración base.
 
 ---
 
@@ -419,8 +445,7 @@ Usar perfiles: `application-dev.yml`, `application-prd.yml`.
 - **Java 21** — records para DTOs/domain, sealed classes y pattern matching.
 - **Nombres en inglés** — código, tablas, columnas, variables, métodos.
 - **Comentarios y Javadoc en español.**
-- **Reactive first** — cero `.block()` en el flujo principal.
-- Conversión WebFlux↔RxJava siempre con `RxJava3Adapter`.
+- **Reactive first** — cero `.block()` en el flujo principal. Reactor puro (`Mono`/`Flux`), sin RxJava.
 - Un archivo = una clase pública.
 - Clases < 150 líneas salvo justificación.
 - Todos los endpoints anotados con `@Operation` y `@ApiResponse` de SpringDoc.
@@ -449,9 +474,11 @@ feat(setup): inicializa proyecto con dependencias y configuración base
 ## Testing
 
 - Framework: JUnit 5 + Mockito + StepVerifier (reactivos).
-- Cobertura mínima: **70%** en `src/main/`.
-- Tests de integración con Testcontainers (PostgreSQL real, no H2).
-- Mocks para Telegram y Hikvision en tests unitarios.
+- Cobertura mínima: **70%** en `src/main/` — verificado con JaCoCo (`mvn test`, reporte en `target/site/jacoco/`).
+- **Estado verificado (2026-07-09):** 105 tests, 0 fallos, 0 errores — cobertura de instrucciones 88.4%.
+- Tests actuales son unitarios (controller con `WebTestClient` + Mockito, service con StepVerifier/Mockito).
+- `Testcontainers` está en `pom.xml` pero **aún no hay tests de integración que lo usen** — pendiente antes de cerrar esa parte del checklist.
+- Mocks para Telegram en tests unitarios (Hikvision aún no tiene cliente que mockear).
 
 ---
 
@@ -460,32 +487,34 @@ feat(setup): inicializa proyecto con dependencias y configuración base
 | Dirección          | Endpoint / Canal           | Qué hace                              |
 |--------------------|----------------------------|---------------------------------------|
 | CV → Backend       | `POST /api/v1/incidents`   | Envía incidente EPP con imagen        |
-| CV → Backend       | `GET /api/v1/parameters`   | Consulta reglas EPP activas           |
-| Frontend → Backend | Todos los endpoints REST   | Gestión de datos maestros y reportes  |
-| Backend → Telegram | Telegram Bot API           | Alerta push al supervisor             |
-| Backend → Hikvision| ISAPI HTTP                 | Activa sirena física en cámara        |
+| CV → Backend       | `GET /api/v1/parameters/{siteId}` | Consulta reglas EPP activas de la obra |
+| Frontend → Backend | Todos los endpoints REST   | Gestión de datos maestros (reportes aún no implementados) |
+| Backend → Telegram | Telegram Bot API           | Alerta push a los contactos de la obra |
+| Backend → Hikvision| ISAPI HTTP (pendiente)     | Activará sirena física en cámara (HU09, no implementado) |
 | Backend → AWS RDS  | R2DBC                      | Persiste todos los eventos            |
 
 ---
 
 ## Estado Actual
 
-- [ ] Proyecto Spring Boot 3 inicializado con dependencias completas
-- [ ] Esquema DB creado (script SQL + Flyway migrations)
-- [ ] Entidades de dominio definidas (records Java 21)
-- [ ] Ports de entrada y salida definidos
-- [ ] CRUD Sites implementado
-- [ ] CRUD Cameras implementado
-- [ ] CRUD Workers implementado
-- [ ] CRUD Users implementado
-- [ ] Endpoint POST /api/v1/incidents (HU10)
-- [ ] Endpoint GET /api/v1/incidents (HU10)
-- [ ] Endpoint GET/PUT /api/v1/parameters (HU04)
-- [ ] Reportes y estadísticas implementados
-- [ ] Adapter Telegram Bot
-- [ ] Adapter Hikvision ISAPI
-- [ ] Swagger/OpenAPI configurado
-- [ ] Seguridad Bearer token
-- [ ] Tests unitarios (cobertura >= 70%)
-- [ ] Tests de integración Testcontainers
+- [x] Proyecto Spring Boot 3 inicializado con dependencias completas
+- [x] Esquema DB creado (`docs/init-schema.sql`) — sin Flyway migrations todavía (script plano, no versionado por migration tool)
+- [x] Entidades de dominio definidas (records Java 21) — `Site`, `Zone`, `Camera`, `Worker`, `User`, `UserRole`, `SiteContact`, `EppParameter`, `SiteEppRequirement`, `Incident`, `Evidence`, `Notification`, `NotificationChannel`, `NotificationStatus`
+- [x] CRUD Sites implementado
+- [x] CRUD Cameras implementado
+- [x] CRUD Workers implementado
+- [x] CRUD Users implementado
+- [x] CRUD Zones implementado (anidado bajo obra)
+- [x] CRUD Site Contacts implementado (anidado bajo obra)
+- [x] Endpoint POST /api/v1/incidents (HU10)
+- [x] Endpoint GET /api/v1/incidents (HU10)
+- [x] Endpoint GET/PUT /api/v1/parameters/{siteId} (HU04) — por obra, con fallback al catálogo global
+- [ ] Reportes y estadísticas implementados (HU12)
+- [x] Servicio Telegram Bot (`TelegramNotificationService`) — notifica a los contactos de la obra
+- [ ] Cliente Hikvision ISAPI (HU09) — solo existe `HikvisionProperties` (config), sin llamada HTTP real
+- [x] Swagger/OpenAPI configurado (`OpenApiConfig`)
+- [x] Seguridad Bearer token — solo protege `POST /api/v1/incidents`; el resto de endpoints está abierto (sin auth de usuario/JWT todavía)
+- [x] Tests unitarios — 105 tests, 0 fallos, cobertura de instrucciones 88.4% (JaCoCo, verificado 2026-07-09)
+- [ ] Tests de integración Testcontainers — dependencia agregada, sin tests que la usen aún
 - [ ] Configuración AWS RDS / deploy
+- [x] Checkstyle + SpotBugs integrados al build (no bloquean, `failOnViolation=false`)

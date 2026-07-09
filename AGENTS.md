@@ -48,43 +48,39 @@ Autores: Enzo Esteban Quispe / Yvette Flores Castillo
 | Java              | 21 (LTS)                                       |
 | Spring Boot       | 3.x                                            |
 | Spring WebFlux    | Capa web reactiva (Mono / Flux)               |
-| RxJava            | 3.x — lógica de negocio                       |
+| Reactor           | Único stack reactivo — RxJava evaluado y descartado (nunca se implementó) |
 | R2DBC             | Driver reactivo PostgreSQL                    |
 | SpringDoc OpenAPI | Swagger UI `/swagger-ui.html`                 |
-| Telegram Bot API  | Notificaciones push al supervisor             |
-| Hikvision ISAPI   | Activación de sirena física                   |
+| Telegram Bot API  | Notificaciones push a contactos de la obra    |
+| Hikvision ISAPI   | Config lista (`HikvisionProperties`), cliente HTTP pendiente (HU09) |
 | Maven             | Build tool                                     |
+| JaCoCo / Checkstyle / SpotBugs | Cobertura + análisis estático (no bloquean el build) |
 
 ---
 
-## Arquitectura Hexagonal
+## Arquitectura (capas planas, NO hexagonal)
 
 ```
 src/main/java/com/safevision/back/
-├── adapter/
-│   ├── in/web/              ← Controllers WebFlux
-│   └── out/
-│       ├── persistence/     ← Repositorios R2DBC
-│       ├── telegram/        ← Telegram adapter
-│       └── hikvision/       ← Hikvision ISAPI adapter
-├── application/service/     ← Casos de uso RxJava
-├── domain/
-│   ├── model/               ← Entidades (records Java 21)
-│   └── port/
-│       ├── in/              ← Interfaces de entrada
-│       └── out/             ← Interfaces de salida
-└── config/                  ← OpenApi, Security, R2DBC, Telegram, Hikvision
+├── controller/     ← REST controllers WebFlux (Mono/Flux)
+├── dto/            ← Request/Response records
+├── model/          ← Entidades R2DBC (records Java 21, @Table/@Id)
+├── repository/     ← ReactiveCrudRepository<T, Long>
+├── service/        ← Lógica de negocio (Reactor puro, sin RxJava)
+└── config/         ← OpenApiConfig, SecurityConfig, TelegramProperties, HikvisionProperties
 ```
 
-**Regla:** dominio no depende de Spring ni adapters.
-**Mezcla WebFlux + RxJava:** controllers Mono/Flux, services RxJava.
-Conversión siempre con `RxJava3Adapter`. Nunca `.block()`.
+**IDs:** `Long` (BIGINT IDENTITY), no UUID.
+**Reactive first:** cero `.block()`. Nunca hubo capa RxJava/ports-adapters — es
+código plano controller → service → repository.
 
 ---
 
 ## Entidades del Dominio
 
-`Site`, `Camera`, `Worker`, `User`, `Incident`, `Evidence`, `Notification`, `EppParameter`
+`Site`, `Zone`, `Camera`, `Worker`, `User`, `UserRole`, `SiteContact`,
+`EppParameter`, `SiteEppRequirement`, `Incident`, `Evidence`, `Notification`,
+`NotificationChannel`, `NotificationStatus`
 
 ---
 
@@ -95,6 +91,10 @@ Conversión siempre con `RxJava3Adapter`. Nunca `.block()`.
 ```
 GET/POST        /api/v1/sites
 GET/PUT/DELETE  /api/v1/sites/{id}
+GET/POST        /api/v1/sites/{siteId}/zones
+PUT/DELETE      /api/v1/sites/{siteId}/zones/{zoneId}
+GET/POST        /api/v1/sites/{siteId}/contacts
+PUT/DELETE      /api/v1/sites/{siteId}/contacts/{contactId}
 GET/POST        /api/v1/cameras
 GET/PUT/DELETE  /api/v1/cameras/{id}
 GET/POST        /api/v1/workers
@@ -106,29 +106,16 @@ GET/PUT/DELETE  /api/v1/users/{id}
 ### Incidentes EPP (HU10)
 
 ```
-POST  /api/v1/incidents       ← desde módulo CV (Bearer token)
-GET   /api/v1/incidents
+POST  /api/v1/incidents       ← desde módulo CV (único endpoint con Bearer token)
+GET   /api/v1/incidents       ← filtros opcionales: siteId, workerId, from, to
 GET   /api/v1/incidents/{id}
-```
-
-### Reportes
-
-```
-GET   /api/v1/reports/incidents
-GET   /api/v1/reports/summary
-```
-
-### Notificaciones
-
-```
-GET   /api/v1/notifications
 ```
 
 ### Parámetros EPP (HU04)
 
 ```
-GET   /api/v1/parameters
-PUT   /api/v1/parameters
+GET   /api/v1/parameters/{siteId}   ← fallback al catálogo completo si la obra no tiene config
+PUT   /api/v1/parameters/{siteId}
 ```
 
 ### Documentación
@@ -136,6 +123,13 @@ PUT   /api/v1/parameters
 ```
 GET   /swagger-ui.html
 GET   /v3/api-docs
+```
+
+### Pendiente (sin controller aún)
+
+```
+/api/v1/reports/...     ← HU12, no implementado
+/api/v1/notifications   ← no implementado (los eventos sí se persisten)
 ```
 
 ---
@@ -157,22 +151,27 @@ GET   /v3/api-docs
 
 ## Esquema de Base de Datos (inglés)
 
-Tablas: `sites`, `cameras`, `workers`, `users`, `incidents`, `evidence`,
-`notifications`, `epp_parameters`.
+Tablas: `sites`, `zones`, `cameras`, `workers`, `users`, `user_roles`,
+`site_contacts`, `epp_parameters`, `site_epp_requirements`, `incidents`,
+`evidence`, `notifications`, `notification_channels`, `notification_statuses`.
 
-Soft delete vía columna `active`. FK entre tablas.
-Ver CLAUDE.md para DDL completo.
+IDs `BIGINT IDENTITY` (no UUID). Soft delete vía columna `active`. FK entre
+tablas — catálogos normalizados en vez de VARCHAR inline.
+Ver `docs/init-schema.sql` y CLAUDE.md para el DDL completo.
 
 ---
 
 ## Flujo de Incidente
 
 ```
-CV → POST /api/v1/incidents
+CV → POST /api/v1/incidents (Bearer ALERT_SERVICE_TOKEN)
+  → resuelve worker_code/camera_code/site_name → IDs
   → persiste incidents + evidence
-  → TelegramNotificationAdapter
-  → HikvisionSirenAdapter
+  → resuelve contactos de la obra (site_contacts, fallback env var)
+  → TelegramNotificationService (por cada contacto)
   → persiste notifications (SENT/FAILED)
+
+Hikvision (HU09) aún no está integrado — solo hay config (HikvisionProperties).
 ```
 
 ---
@@ -199,7 +198,8 @@ SERVER_PORT=8080
 - Java 21: records, sealed classes, pattern matching.
 - Nombres en inglés (código y BD), comentarios en español.
 - Reactive first — cero `.block()`.
-- Cobertura tests >= 70%. Testcontainers para integración.
+- Cobertura tests >= 70% — verificado 2026-07-09: 105 tests, 0 fallos, 88.4% instrucciones (JaCoCo).
+- Testcontainers en `pom.xml` pero sin tests de integración que lo usen todavía.
 - Endpoints documentados con `@Operation` / `@ApiResponse`.
 
 ## Git
@@ -209,3 +209,14 @@ feature/HU<NN>-<short-name> → develop → release → main
 feat(HU10): implementa registro de incidente y notificación Telegram
 feat(sites): implementa CRUD de obras
 ```
+
+## Estado Actual (resumen — ver CLAUDE.md para el checklist completo)
+
+Implementado: CRUD de Sites/Zones/Cameras/Workers/Users/SiteContacts,
+POST+GET /api/v1/incidents (HU10), GET/PUT /api/v1/parameters/{siteId} (HU04),
+notificación Telegram vía `TelegramNotificationService`, Swagger, Bearer token
+en el endpoint de incidentes, 105 tests unitarios.
+
+Pendiente: reportes/estadísticas (HU12), endpoint de notificaciones, cliente
+Hikvision ISAPI (HU09), tests de integración con Testcontainers, auth de
+usuario/JWT para el resto de endpoints, deploy AWS RDS.
