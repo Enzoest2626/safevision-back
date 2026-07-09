@@ -6,6 +6,7 @@ import jakarta.validation.constraints.Size;
 
 public record CameraRequest(
         @NotNull Long siteId,
+        Long zoneId,
         @NotBlank @Size(max = 50) String code,
         @Size(max = 100) String name,
         @Size(max = 50) String ipAddress,

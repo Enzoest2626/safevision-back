@@ -34,7 +34,7 @@ public class CameraService {
 
     public Mono<CameraResponse> create(CameraRequest request, String createdBy) {
         LocalDateTime now = LocalDateTime.now();
-        Camera camera = new Camera(null, request.siteId(), request.code(), request.name(),
+        Camera camera = new Camera(null, request.siteId(), request.zoneId(), request.code(), request.name(),
                 request.ipAddress(), request.rtspUrl(), true, now, createdBy, now, createdBy);
         return cameraRepository.save(camera).map(CameraResponse::from);
     }
@@ -45,7 +45,7 @@ public class CameraService {
                 .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Camera not found")))
                 .flatMap(existing -> {
                     Camera updated = new Camera(
-                            existing.id(), request.siteId(), request.code(), request.name(),
+                            existing.id(), request.siteId(), request.zoneId(), request.code(), request.name(),
                             request.ipAddress(), request.rtspUrl(), true,
                             existing.createdAt(), existing.createdBy(),
                             LocalDateTime.now(), updatedBy
@@ -61,7 +61,7 @@ public class CameraService {
                 .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Camera not found")))
                 .flatMap(existing -> {
                     Camera deactivated = new Camera(
-                            existing.id(), existing.siteId(), existing.code(), existing.name(),
+                            existing.id(), existing.siteId(), existing.zoneId(), existing.code(), existing.name(),
                             existing.ipAddress(), existing.rtspUrl(), false,
                             existing.createdAt(), existing.createdBy(),
                             LocalDateTime.now(), updatedBy
