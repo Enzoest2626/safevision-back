@@ -2,7 +2,7 @@ spring:
   r2dbc:
     url: ${SPRING_R2DBC_URL:r2dbc:postgresql://localhost:5432/safevision}
     username: ${SPRING_R2DBC_USERNAME:safevision}
-    password: ${SPRING_R2DBC_PASSWORD:}
+    password: ${SPRING_R2DBC_PASSWORD:safevision}
 
 telegram:
   bot-token: ${TELEGRAM_BOT_TOKEN:}

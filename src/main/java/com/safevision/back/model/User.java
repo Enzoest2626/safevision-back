@@ -12,7 +12,7 @@ public record User(
         String email,
         String passwordHash,
         Long roleId,
-        String telegramChatId,
+        String phone,
         boolean active,
         LocalDateTime createdAt,
         String createdBy,

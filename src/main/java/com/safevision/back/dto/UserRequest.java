@@ -9,5 +9,5 @@ public record UserRequest(
         @NotBlank @Email @Size(max = 200) String email,
         @NotBlank @Size(min = 8, max = 300) String password,
         @NotBlank String roleCode,
-        @Size(max = 100) String telegramChatId
+        @Size(max = 20) String phone
 ) {}

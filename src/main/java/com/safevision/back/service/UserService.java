@@ -46,7 +46,7 @@ public class UserService {
                     LocalDateTime now = LocalDateTime.now();
                     String hash = passwordEncoder.encode(request.password());
                     User user = new User(null, request.username(), request.email(), hash,
-                            role.id(), request.telegramChatId(), true, now, createdBy, now, createdBy);
+                            role.id(), request.phone(), true, now, createdBy, now, createdBy);
                     return userRepository.save(user);
                 })
                 .map(UserResponse::from);
@@ -62,7 +62,7 @@ public class UserService {
                             String hash = passwordEncoder.encode(request.password());
                             User updated = new User(
                                     existing.id(), request.username(), request.email(), hash,
-                                    role.id(), request.telegramChatId(), true,
+                                    role.id(), request.phone(), true,
                                     existing.createdAt(), existing.createdBy(),
                                     LocalDateTime.now(), updatedBy
                             );
@@ -78,7 +78,7 @@ public class UserService {
                 .flatMap(existing -> {
                     User deactivated = new User(
                             existing.id(), existing.username(), existing.email(), existing.passwordHash(),
-                            existing.roleId(), existing.telegramChatId(), false,
+                            existing.roleId(), existing.phone(), false,
                             existing.createdAt(), existing.createdBy(),
                             LocalDateTime.now(), updatedBy
                     );
