@@ -1,0 +1,40 @@
+<?xml version="1.0"?>
+<!DOCTYPE module PUBLIC
+        "-//Checkstyle//DTD Checkstyle Configuration 1.3//EN"
+        "https://checkstyle.org/dtds/configuration_1_3.dtd">
+
+<!--
+    Reglas de Maintainability para SafeVision Backend.
+    Valida las convenciones ya documentadas en CLAUDE.md:
+    - Clases < 150 líneas salvo justificación.
+    - Sin imports con wildcard ni imports no usados.
+    - Sin bloques vacíos silenciosos.
+    No usa presets (Google/Sun) porque asumen convenciones de estilo
+    (2/4 espacios, límite de 80 columnas, Javadoc obligatorio) distintas
+    a las adoptadas en este proyecto.
+-->
+<module name="Checker">
+    <property name="charset" value="UTF-8"/>
+
+    <module name="TreeWalker">
+        <module name="AvoidStarImport"/>
+        <module name="UnusedImports"/>
+        <module name="RedundantImport"/>
+        <module name="EmptyBlock">
+            <property name="option" value="text"/>
+        </module>
+        <module name="EmptyCatchBlock"/>
+        <module name="EqualsHashCode"/>
+        <module name="SimplifyBooleanExpression"/>
+        <module name="SimplifyBooleanReturn"/>
+    </module>
+
+    <module name="LineLength">
+        <property name="max" value="140"/>
+    </module>
+
+    <module name="FileLength">
+        <property name="max" value="150"/>
+        <property name="fileExtensions" value="java"/>
+    </module>
+</module>
