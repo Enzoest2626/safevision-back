@@ -75,9 +75,11 @@ class IncidentControllerTest {
                 .expectStatus().isBadRequest();
     }
 
+    // ── CP31: Ausencia de notificación sin incumplimiento ────────────────────
+
     @Test
-    @DisplayName("HU10-CA2 — Sin incumplimiento activo (missing_epp vacío) no se registra ni se notifica")
-    void register_sinIncumplimientoActivo_noRegistraNiNotifica() {
+    @DisplayName("CP31 — Sin incumplimiento activo (missing_epp vacío) no se registra ni se notifica")
+    void cp31_sinIncumplimientoActivo_noRegistraNiNotifica() {
         client.post().uri("/api/v1/incidents")
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("""
@@ -90,6 +92,11 @@ class IncidentControllerTest {
         // La validación @NotEmpty corta el flujo antes del controller: el servicio
         // (y por lo tanto la notificación Telegram que orquesta) nunca se invoca.
         verify(service, never()).register(any());
+
+        System.out.println("\n[CP31] Evaluación conforme (missing_epp vacío) — sin incumplimiento:");
+        System.out.println("       Respuesta HTTP     = 400 (validación @NotEmpty)");
+        System.out.println("       service.register() = nunca invocado");
+        System.out.println("[CP31] No se invoca registro ni Telegram => PASA");
     }
 
     @Test

@@ -185,6 +185,14 @@ CREATE TABLE site_epp_requirements (
     UNIQUE (site_id, epp_parameter_id)
 );
 
+-- Control de versión optimista para la configuración EPP de una obra (CP18,
+-- HU04) — evita que dos PUT concurrentes sobre la misma obra se pisen entre
+-- sí sin darse cuenta. Se crea perezosamente (lazily) en el primer PUT.
+CREATE TABLE site_epp_config_versions (
+    site_id BIGINT NOT NULL PRIMARY KEY REFERENCES sites(id),
+    version BIGINT NOT NULL DEFAULT 0
+);
+
 -- ────────────────────────────────────────────────────────────
 -- ÍNDICES
 -- ────────────────────────────────────────────────────────────

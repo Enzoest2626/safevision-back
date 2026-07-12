@@ -3,8 +3,10 @@ package com.safevision.back.service;
 import com.safevision.back.dto.EppParameterRequest;
 import com.safevision.back.dto.EppParameterResponse;
 import com.safevision.back.model.EppParameter;
+import com.safevision.back.model.SiteEppConfigVersion;
 import com.safevision.back.model.SiteEppRequirement;
 import com.safevision.back.repository.EppParameterRepository;
+import com.safevision.back.repository.SiteEppConfigVersionRepository;
 import com.safevision.back.repository.SiteEppRequirementRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -19,12 +21,21 @@ import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -37,6 +48,9 @@ class EppParameterServiceTest {
     @Mock
     private SiteEppRequirementRepository siteEppRepo;
 
+    @Mock
+    private SiteEppConfigVersionRepository versionRepo;
+
     private EppParameterService service;
 
     private static final Long SITE_ID = 1L;
@@ -47,7 +61,7 @@ class EppParameterServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new EppParameterService(eppRepo, siteEppRepo);
+        service = new EppParameterService(eppRepo, siteEppRepo, versionRepo);
     }
 
     private static EppParameter epp(Long id, String code, String name) {
@@ -68,6 +82,9 @@ class EppParameterServiceTest {
 
         when(eppRepo.findByCode("casco")).thenReturn(Mono.just(casco));
         when(eppRepo.findByCode("chaleco")).thenReturn(Mono.just(chaleco));
+        when(versionRepo.ensureExists(SITE_ID)).thenReturn(Mono.empty());
+        when(versionRepo.findById(SITE_ID)).thenReturn(Mono.just(new SiteEppConfigVersion(SITE_ID, 0L)));
+        when(versionRepo.compareAndSwap(SITE_ID, 0L)).thenReturn(Mono.just(1L));
         when(siteEppRepo.deleteAllBySiteId(SITE_ID)).thenReturn(Mono.just(0L));
         when(siteEppRepo.save(any(SiteEppRequirement.class)))
                 .thenReturn(Mono.just(req(SITE_ID, 1L)))
@@ -172,45 +189,86 @@ class EppParameterServiceTest {
         verify(siteEppRepo, never()).deleteAllBySiteId(anyLong());
     }
 
-    // ── CP18: Edición concurrente sobre la misma obra ─────────────────────────
+    // ── CP18: Edición concurrente sobre la misma obra (optimistic locking) ────
 
     @Test
-    @DisplayName("CP18 — Dos PUT simultáneos sobre la misma obra completan sin excepción")
-    void cp18_edicionConcurrente_sinCondicionDeCarrera() {
+    @DisplayName("CP18 — 20 repeticiones de dos PUT reales concurrentes (threads): siempre 1 gana y 1 recibe 409")
+    void cp18_edicionConcurrente_conflictoDeVersion_20Repeticiones() throws Exception {
+        final int REPETICIONES = 20;
         EppParameterRequest req1 = new EppParameterRequest(List.of("casco"));
         EppParameterRequest req2 = new EppParameterRequest(List.of("chaleco"));
 
-        // Ambas operaciones leen su EPP del catálogo
         when(eppRepo.findByCode("casco")).thenReturn(Mono.just(casco));
         when(eppRepo.findByCode("chaleco")).thenReturn(Mono.just(chaleco));
-        // Ambas borran la configuración anterior
+        when(versionRepo.ensureExists(SITE_ID)).thenReturn(Mono.empty());
+        when(versionRepo.findById(SITE_ID)).thenReturn(Mono.just(new SiteEppConfigVersion(SITE_ID, 0L)));
+
+        // Simula el CAS atómico real (UPDATE ... WHERE version = :expectedVersion en
+        // Postgres): con dos threads reales llamando a la vez, solo el primero en
+        // ejecutar compareAndSet gana — AtomicBoolean es thread-safe, así que esto
+        // resuelve la carrera igual que la fila de la BD lo haría. Se resetea en
+        // cada repetición para simular una nueva ronda de concurrencia.
+        AtomicBoolean won = new AtomicBoolean(false);
+        when(versionRepo.compareAndSwap(eq(SITE_ID), anyLong())).thenAnswer(invocation ->
+                won.compareAndSet(false, true) ? Mono.just(1L) : Mono.empty());
+
         when(siteEppRepo.deleteAllBySiteId(SITE_ID)).thenReturn(Mono.just(1L));
-        // Ambas persisten su nuevo registro
-        when(siteEppRepo.save(any(SiteEppRequirement.class)))
-                .thenReturn(Mono.just(req(SITE_ID, 1L)))
-                .thenReturn(Mono.just(req(SITE_ID, 2L)));
+        when(siteEppRepo.save(any(SiteEppRequirement.class))).thenReturn(Mono.just(req(SITE_ID, 1L)));
 
-        Mono<EppParameterResponse> mono1 = service.updateForSite(SITE_ID, req1, "user1");
-        Mono<EppParameterResponse> mono2 = service.updateForSite(SITE_ID, req2, "user2");
+        System.out.println("\n[CP18] " + REPETICIONES + " repeticiones de dos PUT reales concurrentes "
+                + "(threads) sobre siteId=" + SITE_ID + ":");
 
-        StepVerifier.create(Mono.zip(mono1, mono2))
-                .assertNext(tuple -> {
-                    EppParameterResponse r1 = tuple.getT1();
-                    EppParameterResponse r2 = tuple.getT2();
+        int rondasCorrectas = 0;
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            for (int ronda = 1; ronda <= REPETICIONES; ronda++) {
+                won.set(false);
+                CountDownLatch startLatch = new CountDownLatch(1);
+                List<Object> results = Collections.synchronizedList(new ArrayList<>());
 
-                    System.out.println("\n[CP18] Edición concurrente sobre siteId=" + SITE_ID + ":");
-                    System.out.println("       PUT1 (user1) → " + r1.requiredEpp().stream()
-                            .map(EppParameterResponse.EppItem::code).toList());
-                    System.out.println("       PUT2 (user2) → " + r2.requiredEpp().stream()
-                            .map(EppParameterResponse.EppItem::code).toList());
-                    System.out.println("       Ambos completaron sin excepción: true");
-                    System.out.println("[CP18] Sin condición de carrera, resultado determinista => PASA");
+                Runnable put1 = () -> {
+                    try {
+                        startLatch.await();
+                        results.add(service.updateForSite(SITE_ID, req1, "user1").block());
+                    } catch (Exception e) {
+                        results.add(e);
+                    }
+                };
+                Runnable put2 = () -> {
+                    try {
+                        startLatch.await();
+                        results.add(service.updateForSite(SITE_ID, req2, "user2").block());
+                    } catch (Exception e) {
+                        results.add(e);
+                    }
+                };
 
-                    assertThat(r1).isNotNull();
-                    assertThat(r2).isNotNull();
-                    assertThat(r1.siteId()).isEqualTo(SITE_ID);
-                    assertThat(r2.siteId()).isEqualTo(SITE_ID);
-                })
-                .verifyComplete();
+                Future<?> f1 = pool.submit(put1);
+                Future<?> f2 = pool.submit(put2);
+                startLatch.countDown();
+                f1.get(5, TimeUnit.SECONDS);
+                f2.get(5, TimeUnit.SECONDS);
+
+                long exitosos = results.stream().filter(r -> r instanceof EppParameterResponse).count();
+                long conflictos = results.stream()
+                        .filter(r -> r instanceof ResponseStatusException rse
+                                && rse.getStatusCode() == HttpStatus.CONFLICT)
+                        .count();
+                boolean rondaOk = exitosos == 1 && conflictos == 1;
+                if (rondaOk) {
+                    rondasCorrectas++;
+                }
+                System.out.println("       Ronda " + ronda + ": exitosos=" + exitosos
+                        + " conflictos=" + conflictos + " " + (rondaOk ? "OK" : "FALLA"));
+            }
+        } finally {
+            pool.shutdown();
+        }
+
+        System.out.println("[CP18] " + rondasCorrectas + "/" + REPETICIONES
+                + " rondas con exactamente 1 exitoso y 1 conflicto => "
+                + (rondasCorrectas == REPETICIONES ? "PASA" : "FALLA"));
+
+        assertThat(rondasCorrectas).isEqualTo(REPETICIONES);
     }
 }

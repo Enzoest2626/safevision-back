@@ -4,6 +4,7 @@ import com.safevision.back.dto.EppParameterRequest;
 import com.safevision.back.dto.EppParameterResponse;
 import com.safevision.back.model.SiteEppRequirement;
 import com.safevision.back.repository.EppParameterRepository;
+import com.safevision.back.repository.SiteEppConfigVersionRepository;
 import com.safevision.back.repository.SiteEppRequirementRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -19,11 +20,14 @@ public class EppParameterService {
 
     private final EppParameterRepository eppRepo;
     private final SiteEppRequirementRepository siteEppRepo;
+    private final SiteEppConfigVersionRepository versionRepo;
 
     public EppParameterService(EppParameterRepository eppRepo,
-                               SiteEppRequirementRepository siteEppRepo) {
+                               SiteEppRequirementRepository siteEppRepo,
+                               SiteEppConfigVersionRepository versionRepo) {
         this.eppRepo = eppRepo;
         this.siteEppRepo = siteEppRepo;
+        this.versionRepo = versionRepo;
     }
 
     /**
@@ -63,19 +67,30 @@ public class EppParameterService {
                         "requiredEpp no puede estar vacío"));
             }
 
-            // 1. Validar que todos los codes existen en el catálogo
+            // 1. Validar que todos los codes existen en el catálogo (sin efectos secundarios)
             return Flux.fromIterable(request.requiredEpp())
                     .flatMap(code -> eppRepo.findByCode(code)
                             .switchIfEmpty(Mono.error(new ResponseStatusException(
                                     HttpStatus.BAD_REQUEST, "EPP desconocido: " + code))))
                     .collectList()
+                    .flatMap(validEpps ->
+                            // 2. CAS de versión (CP18) — si otra solicitud ya modificó esta obra
+                            // entre que leímos la versión y este UPDATE, compareAndSwap afecta 0
+                            // filas y switchIfEmpty dispara 409 sin tocar site_epp_requirements.
+                            versionRepo.ensureExists(siteId)
+                                    .then(versionRepo.findById(siteId))
+                                    .flatMap(v -> versionRepo.compareAndSwap(siteId, v.version()))
+                                    .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.CONFLICT,
+                                            "La configuración EPP de esta obra fue modificada por otra solicitud; reintente.")))
+                                    .thenReturn(validEpps)
+                    )
                     .flatMap(validEpps -> {
-                        // 2. Borrar configuración anterior de la obra
+                        // 3. Borrar configuración anterior de la obra
                         return siteEppRepo.deleteAllBySiteId(siteId)
                                 .thenReturn(validEpps);
                     })
                     .flatMap(validEpps -> {
-                        // 3. Insertar nueva configuración
+                        // 4. Insertar nueva configuración
                         LocalDateTime now = LocalDateTime.now();
                         List<SiteEppRequirement> newReqs = validEpps.stream()
                                 .map(epp -> new SiteEppRequirement(

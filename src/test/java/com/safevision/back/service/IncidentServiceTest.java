@@ -9,6 +9,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
@@ -179,5 +180,79 @@ class IncidentServiceTest {
                 .expectErrorMatches(ex -> ex instanceof ResponseStatusException rse
                         && rse.getStatusCode() == HttpStatus.NOT_FOUND)
                 .verify();
+    }
+
+    // ── CP28: Notificación push con datos correctos ──────────────────────────
+
+    @Test
+    @DisplayName("CP28 — Notificación push incluye trabajador, EPP y timestamp correctos")
+    void cp28_notificacionPush_incluyeTrabajadorEppYTimestamp() {
+        SiteContact contact = new SiteContact(5L, 1L, "Supervisor", "999999999", "111222333",
+                true, LocalDateTime.now(), "system", LocalDateTime.now(), "system");
+        LocalDateTime timestampEsperado = LocalDateTime.of(2026, 6, 24, 13, 30);
+        when(siteContactRepo.findBySiteIdAndTelegramChatIdIsNotNullAndActiveTrue(1L))
+                .thenReturn(Flux.just(contact));
+        when(telegramService.sendIncidentAlert(eq("111222333"), any(), any(), any(), anyString(), anyString()))
+                .thenReturn(Mono.empty());
+
+        StepVerifier.create(service.register(requestFor("Main-Site")))
+                .assertNext(response -> {
+                    System.out.println("\n[CP28] Notificación push por incumplimiento confirmado:");
+                    System.out.println("       workerId    = " + response.workerId());
+                    System.out.println("       missingEpp  = " + response.missingEpp());
+                    System.out.println("       occurredAt  = " + response.occurredAt());
+
+                    assertThat(response.workerId()).isEqualTo(10L);
+                    assertThat(response.missingEpp()).containsExactly("helmet", "vest");
+                    assertThat(response.occurredAt()).isEqualTo(timestampEsperado);
+                })
+                .verifyComplete();
+
+        ArgumentCaptor<Incident> incidentCaptor = ArgumentCaptor.forClass(Incident.class);
+        verify(telegramService).sendIncidentAlert(eq("111222333"), incidentCaptor.capture(), any(), any(), anyString(), anyString());
+        Incident incidentEnviado = incidentCaptor.getValue();
+
+        boolean correcto = incidentEnviado.workerId().equals(10L)
+                && List.of(incidentEnviado.missingEpp()).equals(List.of("helmet", "vest"))
+                && incidentEnviado.occurredAt().equals(timestampEsperado);
+        System.out.println("       incidente enviado a Telegram → workerId=" + incidentEnviado.workerId()
+                + ", missingEpp=" + List.of(incidentEnviado.missingEpp())
+                + ", occurredAt=" + incidentEnviado.occurredAt());
+        System.out.println("[CP28] Notificación con trabajador, EPP y timestamp correctos: " + correcto + " => PASA");
+
+        assertThat(incidentEnviado.workerId()).isEqualTo(10L);
+        assertThat(incidentEnviado.missingEpp()).containsExactly("helmet", "vest");
+        assertThat(incidentEnviado.occurredAt()).isEqualTo(timestampEsperado);
+    }
+
+    // ── CP29: Bot de Telegram inaccesible / rate-limit ────────────────────────
+
+    @Test
+    @DisplayName("CP29 — Bot de Telegram con rate-limit (mockeado) registra FAILED sin pérdida silenciosa")
+    void cp29_botTelegramRateLimit_registraFailedSinPerdidaSilenciosa() {
+        when(siteContactRepo.findBySiteIdAndTelegramChatIdIsNotNullAndActiveTrue(1L)).thenReturn(Flux.empty());
+        when(telegramService.sendIncidentAlert(eq("GLOBAL-CHAT"), any(), any(), any(), anyString(), anyString()))
+                .thenReturn(Mono.error(new IllegalStateException("Telegram respondió 429: Too Many Requests")));
+
+        StepVerifier.create(service.register(requestFor("Main-Site")))
+                .assertNext(response -> assertThat(response.id()).isEqualTo(100L))
+                .verifyComplete();
+
+        ArgumentCaptor<Notification> notificationCaptor = ArgumentCaptor.forClass(Notification.class);
+        verify(notificationRepo).save(notificationCaptor.capture());
+        Notification saved = notificationCaptor.getValue();
+
+        boolean registradoFailed = saved.statusId().equals(failedStatus.id())
+                && saved.errorMsg() != null && saved.errorMsg().contains("429");
+
+        System.out.println("\n[CP29] Bot de Telegram inaccesible (rate-limit 429, mockeado):");
+        System.out.println("       incidentId persistido  = " + saved.incidentId());
+        System.out.println("       notification.statusId  = " + saved.statusId() + " (FAILED=" + failedStatus.id() + ")");
+        System.out.println("       notification.errorMsg  = " + saved.errorMsg());
+        System.out.println("       Nota: IncidentService no implementa reintento — onErrorResume va directo a FAILED.");
+        System.out.println("[CP29] Registro FAILED sin pérdida silenciosa del evento: " + registradoFailed + " => PASA");
+
+        assertThat(saved.statusId()).isEqualTo(failedStatus.id());
+        assertThat(saved.errorMsg()).contains("429");
     }
 }
