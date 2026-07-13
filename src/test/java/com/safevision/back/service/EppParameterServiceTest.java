@@ -51,6 +51,9 @@ class EppParameterServiceTest {
     @Mock
     private SiteEppConfigVersionRepository versionRepo;
 
+    @Mock
+    private CvNotificationService cvNotificationService;
+
     private EppParameterService service;
 
     private static final Long SITE_ID = 1L;
@@ -61,7 +64,7 @@ class EppParameterServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new EppParameterService(eppRepo, siteEppRepo, versionRepo);
+        service = new EppParameterService(eppRepo, siteEppRepo, versionRepo, cvNotificationService);
     }
 
     private static EppParameter epp(Long id, String code, String name) {
@@ -108,6 +111,7 @@ class EppParameterServiceTest {
 
         verify(siteEppRepo).deleteAllBySiteId(SITE_ID);
         verify(siteEppRepo, times(2)).save(any(SiteEppRequirement.class));
+        verify(cvNotificationService).notifyRulesChanged();
     }
 
     // ── CP16: Consulta de reglas activas para una obra ────────────────────────
@@ -170,6 +174,7 @@ class EppParameterServiceTest {
 
         verify(siteEppRepo, never()).deleteAllBySiteId(anyLong());
         verify(siteEppRepo, never()).save(any());
+        verify(cvNotificationService, never()).notifyRulesChanged();
     }
 
     @Test
@@ -187,6 +192,7 @@ class EppParameterServiceTest {
                 .verify();
 
         verify(siteEppRepo, never()).deleteAllBySiteId(anyLong());
+        verify(cvNotificationService, never()).notifyRulesChanged();
     }
 
     // ── CP18: Edición concurrente sobre la misma obra (optimistic locking) ────

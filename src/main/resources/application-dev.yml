@@ -13,6 +13,9 @@ hikvision:
   username: ${HIKVISION_USERNAME:}
   password: ${HIKVISION_PASSWORD:}
 
+cv:
+  reload-url: ${CV_RELOAD_URL:}
+
 app:
   security:
     alert-service-token: ${ALERT_SERVICE_TOKEN:dev-token}

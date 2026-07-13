@@ -21,13 +21,16 @@ public class EppParameterService {
     private final EppParameterRepository eppRepo;
     private final SiteEppRequirementRepository siteEppRepo;
     private final SiteEppConfigVersionRepository versionRepo;
+    private final CvNotificationService cvNotificationService;
 
     public EppParameterService(EppParameterRepository eppRepo,
                                SiteEppRequirementRepository siteEppRepo,
-                               SiteEppConfigVersionRepository versionRepo) {
+                               SiteEppConfigVersionRepository versionRepo,
+                               CvNotificationService cvNotificationService) {
         this.eppRepo = eppRepo;
         this.siteEppRepo = siteEppRepo;
         this.versionRepo = versionRepo;
+        this.cvNotificationService = cvNotificationService;
     }
 
     /**
@@ -105,7 +108,8 @@ public class EppParameterService {
                             validEpps.stream()
                                     .map(EppParameterResponse.EppItem::from)
                                     .toList()
-                    ));
+                    ))
+                    .doOnSuccess(response -> cvNotificationService.notifyRulesChanged());
         });
     }
 }
