@@ -1,0 +1,489 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  SafeVision — demo en vivo. Crea RDS + 2 EC2 (backend, CV) con bootstrap
+  100% automatico via UserData: instala el runtime, baja el codigo/modelos/
+  videos de un bucket S3 poblado de antemano (ver infra/upload-assets.sh) y
+  deja los servicios corriendo solos, sin SSH manual. Stack pensado para
+  crearse y borrarse por sesion de demo (aws cloudformation delete-stack).
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: >
+      VPC donde crear todo (usar la VPC default de la cuenta/region:
+      aws ec2 describe-vpcs --filters Name=is-default,Values=true
+      --query 'Vpcs[0].VpcId' --output text).
+
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: >
+      Subnet (dentro de VpcId) donde lanzar las 2 EC2. Cualquier subnet
+      publica de la VPC default sirve (aws ec2 describe-subnets
+      --filters Name=vpc-id,Values=<VpcId> --query 'Subnets[0].SubnetId'
+      --output text).
+
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Key pair EC2 ya existente, usada para SSH en ambas instancias.
+
+  MyIpCidr:
+    Type: String
+    Description: Tu IP publica en formato CIDR (ej. 190.1.2.3/32) para SSH/Swagger.
+    AllowedPattern: '^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$'
+
+  AssetsBucketName:
+    Type: String
+    Description: >
+      Bucket S3 (ya existente, poblado con infra/upload-assets.sh) con
+      backend/app.jar, sql/init-schema.sql, sql/seed-data.sql, cv-app/,
+      models/, videos/.
+
+  DbMasterPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    Description: >
+      Password del usuario safevision en RDS. Evitar comillas, backticks y
+      signos $ — se usa dentro de un script bash en UserData.
+
+  AlertServiceToken:
+    Type: String
+    NoEcho: true
+    Description: Bearer token compartido entre el modulo CV y el backend.
+
+  TelegramBotToken:
+    Type: String
+    NoEcho: true
+
+  TelegramChatId:
+    Type: String
+    NoEcho: true
+
+  LatestUbuntuAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id
+    Description: Resuelto automaticamente al AMI de Ubuntu 24.04 LTS mas reciente en la region.
+
+Resources:
+
+  # ────────────────────────────────────────────────────────────
+  # Security Groups
+  # ────────────────────────────────────────────────────────────
+
+  SgCV:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: SafeVision - CV EC2
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref MyIpCidr
+        - IpProtocol: tcp
+          FromPort: 8554
+          ToPort: 8554
+          CidrIp: !Ref MyIpCidr
+      Tags:
+        - Key: Name
+          Value: sg-cv
+
+  SgBackend:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: SafeVision - Backend EC2
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref MyIpCidr
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: !Ref MyIpCidr
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          SourceSecurityGroupId: !GetAtt SgCV.GroupId
+      Tags:
+        - Key: Name
+          Value: sg-backend
+
+  SgRds:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: SafeVision - RDS
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !GetAtt SgBackend.GroupId
+      Tags:
+        - Key: Name
+          Value: sg-rds
+
+  # ────────────────────────────────────────────────────────────
+  # IAM — lectura del bucket de assets desde las EC2
+  # ────────────────────────────────────────────────────────────
+
+  AssetsReadRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ReadAssetsBucket
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub arn:aws:s3:::${AssetsBucketName}
+                  - !Sub arn:aws:s3:::${AssetsBucketName}/*
+
+  AssetsInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref AssetsReadRole
+
+  # Regla aparte (no inline en SgCV) para evitar dependencia circular:
+  # SgBackend ya referencia SgCV.GroupId inline (arriba), asi que SgCV no
+  # puede referenciar SgBackend inline tambien - se declara como recurso
+  # independiente, creado despues de que ambos grupos ya existen.
+  SgCVAllowBackendWebhook:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !GetAtt SgCV.GroupId
+      IpProtocol: tcp
+      FromPort: 8001
+      ToPort: 8001
+      SourceSecurityGroupId: !GetAtt SgBackend.GroupId
+      Description: Webhook de recarga de parametros (backend -> CV, HU04)
+
+  # ────────────────────────────────────────────────────────────
+  # RDS
+  # ────────────────────────────────────────────────────────────
+
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete
+    Properties:
+      DBInstanceIdentifier: safevision-db
+      DBInstanceClass: db.t4g.micro
+      Engine: postgres
+      EngineVersion: '16'
+      MasterUsername: safevision
+      MasterUserPassword: !Ref DbMasterPassword
+      AllocatedStorage: '20'
+      StorageType: gp3
+      DBName: safevision
+      VPCSecurityGroups:
+        - !GetAtt SgRds.GroupId
+      PubliclyAccessible: false
+      BackupRetentionPeriod: 0
+      DeletionProtection: false
+      MultiAZ: false
+
+  # ────────────────────────────────────────────────────────────
+  # EC2 Backend
+  # ────────────────────────────────────────────────────────────
+
+  BackendInstance:
+    Type: AWS::EC2::Instance
+    DependsOn: RDSInstance
+    Properties:
+      InstanceType: t3.medium
+      ImageId: !Ref LatestUbuntuAmiId
+      KeyName: !Ref KeyPairName
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds:
+        - !GetAtt SgBackend.GroupId
+      IamInstanceProfile: !Ref AssetsInstanceProfile
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 20
+            VolumeType: gp3
+      Tags:
+        - Key: Name
+          Value: safevision-backend
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euo pipefail
+          exec > /var/log/safevision-userdata.log 2>&1
+          echo "=== SafeVision backend bootstrap: $(date) ==="
+
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq wget gnupg unzip curl postgresql-client
+
+          curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+          unzip -q /tmp/awscliv2.zip -d /tmp
+          /tmp/aws/install
+          rm -rf /tmp/awscliv2.zip /tmp/aws
+
+          wget -q -O- https://apt.corretto.aws/corretto.key | gpg --dearmor -o /usr/share/keyrings/corretto-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/corretto-keyring.gpg] https://apt.corretto.aws stable main" > /etc/apt/sources.list.d/corretto.list
+          apt-get update -qq
+          apt-get install -y -qq java-21-amazon-corretto-jdk
+
+          mkdir -p /opt/safevision /etc/safevision
+          chown ubuntu:ubuntu /opt/safevision /etc/safevision
+
+          aws s3 cp s3://${AssetsBucketName}/backend/app.jar /opt/safevision/app.jar
+          aws s3 cp s3://${AssetsBucketName}/sql/init-schema.sql /opt/safevision/init-schema.sql
+          aws s3 cp s3://${AssetsBucketName}/sql/seed-data.sql /opt/safevision/seed-data.sql
+          chown ubuntu:ubuntu /opt/safevision/app.jar
+
+          echo "Esperando a que RDS acepte conexiones..."
+          until pg_isready -h ${RDSInstance.Endpoint.Address} -p 5432 -U safevision >/dev/null 2>&1; do
+            sleep 5
+          done
+          echo "RDS disponible, cargando schema + seed..."
+
+          export PGPASSWORD='${DbMasterPassword}'
+          psql "host=${RDSInstance.Endpoint.Address} port=5432 dbname=safevision user=safevision sslmode=require" -v ON_ERROR_STOP=1 -f /opt/safevision/init-schema.sql
+          psql "host=${RDSInstance.Endpoint.Address} port=5432 dbname=safevision user=safevision sslmode=require" -v ON_ERROR_STOP=1 -f /opt/safevision/seed-data.sql
+          unset PGPASSWORD
+
+          cat > /etc/safevision/backend.env <<ENVEOF
+          SPRING_PROFILES_ACTIVE=prd
+          SPRING_R2DBC_URL=r2dbc:postgresql://${RDSInstance.Endpoint.Address}:5432/safevision
+          SPRING_R2DBC_USERNAME=safevision
+          SPRING_R2DBC_PASSWORD=${DbMasterPassword}
+          ALERT_SERVICE_TOKEN=${AlertServiceToken}
+          TELEGRAM_BOT_TOKEN=${TelegramBotToken}
+          TELEGRAM_CHAT_ID=${TelegramChatId}
+          SERVER_PORT=8080
+          ENVEOF
+          chmod 600 /etc/safevision/backend.env
+
+          cat > /etc/systemd/system/safevision-back.service <<'UNITEOF'
+          [Unit]
+          Description=SafeVision Backend
+          After=network.target
+
+          [Service]
+          Type=simple
+          User=ubuntu
+          WorkingDirectory=/opt/safevision
+          EnvironmentFile=/etc/safevision/backend.env
+          ExecStart=/usr/bin/java -jar /opt/safevision/app.jar
+          Restart=always
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+          UNITEOF
+
+          systemctl daemon-reload
+          systemctl enable --now safevision-back
+          echo "=== SafeVision backend bootstrap terminado: $(date) ==="
+
+  # ────────────────────────────────────────────────────────────
+  # EC2 CV
+  # ────────────────────────────────────────────────────────────
+
+  CVInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: c6i.xlarge
+      ImageId: !Ref LatestUbuntuAmiId
+      KeyName: !Ref KeyPairName
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds:
+        - !GetAtt SgCV.GroupId
+      IamInstanceProfile: !Ref AssetsInstanceProfile
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 40
+            VolumeType: gp3
+      Tags:
+        - Key: Name
+          Value: safevision-cv
+      UserData:
+        Fn::Base64:
+          Fn::Join:
+            - ''
+            - - !Sub |
+                #!/bin/bash
+                set -euo pipefail
+                exec > /var/log/safevision-userdata.log 2>&1
+                echo "=== SafeVision CV bootstrap: $(date) ==="
+
+                export DEBIAN_FRONTEND=noninteractive
+                apt-get update -qq
+                apt-get install -y -qq python3-pip python3-venv python3-dev ffmpeg curl unzip
+
+                curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+                unzip -q /tmp/awscliv2.zip -d /tmp
+                /tmp/aws/install
+                rm -rf /tmp/awscliv2.zip /tmp/aws
+
+                su - ubuntu -c "python3 -m venv /home/ubuntu/venv"
+                su - ubuntu -c "/home/ubuntu/venv/bin/pip install --upgrade pip --quiet"
+                su - ubuntu -c "/home/ubuntu/venv/bin/pip install --quiet \
+                  torch==2.12.0 torchvision==0.27.0 --index-url https://download.pytorch.org/whl/cpu"
+                su - ubuntu -c "/home/ubuntu/venv/bin/pip install --quiet \
+                  ultralytics==8.4.51 \
+                  opencv-python-headless==4.13.0.92 \
+                  numpy==2.4.4 \
+                  Pillow \
+                  openvino==2026.2.0 \
+                  httpx==0.28.1 \
+                  python-dotenv==1.2.2 \
+                  fastapi==0.121.2 \
+                  uvicorn==0.38.0 \
+                  'lap>=0.5.12'"
+
+                mkdir -p /home/ubuntu/models /home/ubuntu/videos /home/ubuntu/safevision-cv
+                aws s3 cp --recursive s3://${AssetsBucketName}/models/ /home/ubuntu/models/
+                aws s3 cp --recursive s3://${AssetsBucketName}/videos/ /home/ubuntu/videos/
+                aws s3 cp --recursive s3://${AssetsBucketName}/cv-app/ /home/ubuntu/safevision-cv/
+                chown -R ubuntu:ubuntu /home/ubuntu/models /home/ubuntu/videos /home/ubuntu/safevision-cv /home/ubuntu/venv
+
+                MEDIAMTX_URL=$(curl -s https://api.github.com/repos/bluenviron/mediamtx/releases/latest \
+                  | grep "browser_download_url.*linux_amd64.tar.gz" | cut -d '"' -f 4)
+                mkdir -p /home/ubuntu/mediamtx
+                curl -sL "$MEDIAMTX_URL" | tar -xz -C /home/ubuntu/mediamtx
+                chown -R ubuntu:ubuntu /home/ubuntu/mediamtx
+
+              - |
+                cat > /home/ubuntu/simulate_camera.sh <<'SCRIPTEOF'
+                #!/bin/bash
+                set -euo pipefail
+                PATH_NAME="${1:?Uso: simulate_camera.sh <obra1|obra2|obra3>}"
+                NUM="${PATH_NAME//obra/}"
+                VIDEO="$HOME/videos/OBRA_REAL_${NUM}.mp4"
+                echo "Publicando $VIDEO en rtsp://localhost:8554/$PATH_NAME ..."
+                ffmpeg -re -i "$VIDEO" -c copy -f rtsp "rtsp://localhost:8554/$PATH_NAME"
+                SCRIPTEOF
+              - !Sub |
+                chmod +x /home/ubuntu/simulate_camera.sh
+                chown ubuntu:ubuntu /home/ubuntu/simulate_camera.sh
+
+                mkdir -p /etc/safevision
+                cat > /etc/safevision/cv.env <<ENVEOF
+                VIDEO_SOURCE=rtsp://localhost:8554/obra1
+                ALERT_SERVICE_URL=http://${BackendInstance.PrivateIp}:8080/api/v1/incidents
+                ALERT_SERVICE_TOKEN=${AlertServiceToken}
+                PARAMETERS_URL=http://${BackendInstance.PrivateIp}:8080/api/v1/parameters
+                SITE_ID=1
+                SITE_NAME=Obra-Principal
+                CAMERA_ID=CAM-01
+                COOLDOWN_SECONDS=60
+                MODEL_PATH=/home/ubuntu/models/best_int8_openvino_model
+                DISPLAY_WINDOW=false
+                RELOAD_SERVER_PORT=8001
+                TZ=America/Lima
+                ENVEOF
+                chmod 600 /etc/safevision/cv.env
+
+                cat > /etc/systemd/system/mediamtx.service <<'UNITEOF'
+                [Unit]
+                Description=MediaMTX RTSP Server
+                After=network.target
+
+                [Service]
+                Type=simple
+                User=ubuntu
+                WorkingDirectory=/home/ubuntu/mediamtx
+                ExecStart=/home/ubuntu/mediamtx/mediamtx
+                Restart=always
+                RestartSec=5
+
+                [Install]
+                WantedBy=multi-user.target
+                UNITEOF
+
+                cat > /etc/systemd/system/safevision-cv.service <<'UNITEOF'
+                [Unit]
+                Description=SafeVision CV Pipeline
+                After=network.target mediamtx.service
+
+                [Service]
+                Type=simple
+                User=ubuntu
+                WorkingDirectory=/home/ubuntu/safevision-cv
+                EnvironmentFile=/etc/safevision/cv.env
+                ExecStart=/home/ubuntu/venv/bin/python main.py
+                Restart=always
+                RestartSec=5
+
+                [Install]
+                WantedBy=multi-user.target
+                UNITEOF
+
+                systemctl daemon-reload
+                systemctl enable --now mediamtx
+                systemctl enable --now safevision-cv
+                echo "=== SafeVision CV bootstrap terminado: $(date) ==="
+
+  # ────────────────────────────────────────────────────────────
+  # Elastic IPs
+  # ────────────────────────────────────────────────────────────
+
+  BackendEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref BackendInstance
+      Tags:
+        - Key: Name
+          Value: eip-backend
+
+  CVEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref CVInstance
+      Tags:
+        - Key: Name
+          Value: eip-cv
+
+Outputs:
+  BackendPublicIP:
+    Description: IP publica del backend (Swagger, GET /api/v1/incidents).
+    Value: !Ref BackendEIP
+
+  CVPublicIP:
+    Description: IP publica de la EC2 de CV (SSH para correr simulate_camera.sh).
+    Value: !Ref CVEIP
+
+  BackendPrivateIP:
+    Description: IP privada del backend (para referencia/debug).
+    Value: !GetAtt BackendInstance.PrivateIp
+
+  CVPrivateIP:
+    Description: >
+      IP privada de la EC2 de CV — usada por deploy.sh para configurar
+      CV_RELOAD_URL en el backend despues de crear el stack (ver README,
+      seccion del webhook de recarga de parametros).
+    Value: !GetAtt CVInstance.PrivateIp
+
+  RDSEndpoint:
+    Description: Endpoint del RDS (sin acceso publico, solo referencia).
+    Value: !GetAtt RDSInstance.Endpoint.Address
+
+  SSHBackendCommand:
+    Value: !Sub ssh -i ${KeyPairName}.pem ubuntu@${BackendEIP}
+
+  SSHCVCommand:
+    Value: !Sub ssh -i ${KeyPairName}.pem ubuntu@${CVEIP}
+
+  SimulateCameraCommand:
+    Description: Comando para disparar la demo una vez conectado por SSH a la EC2 CV.
+    Value: ./simulate_camera.sh obra1
