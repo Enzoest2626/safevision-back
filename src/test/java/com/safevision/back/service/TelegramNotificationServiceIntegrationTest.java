@@ -1,5 +1,7 @@
 package com.safevision.back.service;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import com.safevision.back.config.TelegramProperties;
 import com.safevision.back.model.Camera;
 import com.safevision.back.model.Incident;
@@ -7,14 +9,13 @@ import com.safevision.back.model.Site;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
+import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
-
-import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * CP30 (HU10) — integración real contra la Bot API de Telegram (sin mocks).
@@ -44,7 +45,7 @@ class TelegramNotificationServiceIntegrationTest {
         TelegramProperties props = new TelegramProperties(
                 System.getenv("TELEGRAM_BOT_TOKEN"),
                 System.getenv("TELEGRAM_CHAT_ID"));
-        return new TelegramNotificationService(props);
+        return new TelegramNotificationService(WebClient.builder(), props);
     }
 
     private Incident sampleIncident(int seq) {

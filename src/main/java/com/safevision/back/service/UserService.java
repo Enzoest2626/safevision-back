@@ -41,7 +41,8 @@ public class UserService {
 
     public Mono<UserResponse> create(UserRequest request, String createdBy) {
         return userRoleRepository.findByCode(request.roleCode())
-                .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid role: " + request.roleCode())))
+                .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Invalid role: " + request.roleCode())))
                 .flatMap(role -> {
                     LocalDateTime now = LocalDateTime.now();
                     String hash = passwordEncoder.encode(request.password());
@@ -57,7 +58,8 @@ public class UserService {
                 .filter(User::active)
                 .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found")))
                 .flatMap(existing -> userRoleRepository.findByCode(request.roleCode())
-                        .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid role: " + request.roleCode())))
+                        .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                                "Invalid role: " + request.roleCode())))
                         .flatMap(role -> {
                             String hash = passwordEncoder.encode(request.password());
                             User updated = new User(

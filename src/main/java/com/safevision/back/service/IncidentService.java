@@ -5,22 +5,13 @@ import com.safevision.back.dto.IncidentResponse;
 import com.safevision.back.model.Camera;
 import com.safevision.back.model.Evidence;
 import com.safevision.back.model.Incident;
-import com.safevision.back.model.Notification;
 import com.safevision.back.model.Site;
-import com.safevision.back.model.SiteContact;
 import com.safevision.back.model.Worker;
 import com.safevision.back.repository.CameraRepository;
 import com.safevision.back.repository.EvidenceRepository;
 import com.safevision.back.repository.IncidentRepository;
-import com.safevision.back.repository.NotificationChannelRepository;
-import com.safevision.back.repository.NotificationRepository;
-import com.safevision.back.repository.NotificationStatusRepository;
-import com.safevision.back.model.Zone;
-import com.safevision.back.repository.SiteContactRepository;
 import com.safevision.back.repository.SiteRepository;
 import com.safevision.back.repository.WorkerRepository;
-import com.safevision.back.repository.ZoneRepository;
-import com.safevision.back.config.TelegramProperties;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
@@ -28,56 +19,33 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.LocalDateTime;
-import java.util.List;
 
 /**
- * Orquesta el registro de incidentes EPP (HU10): persiste incidente + evidencia,
- * notifica a los contactos de la obra vía Telegram, y registra el resultado en `notifications`.
+ * Orquesta el registro de incidentes EPP (HU10): persiste incidente + evidencia
+ * y delega la notificación de la obra a {@link IncidentNotificationService}.
  */
 @Service
 public class IncidentService {
 
-    private static final String CHANNEL_TELEGRAM = "TELEGRAM";
-    private static final String STATUS_SENT = "SENT";
-    private static final String STATUS_FAILED = "FAILED";
-
     private final IncidentRepository incidentRepo;
     private final EvidenceRepository evidenceRepo;
-    private final NotificationRepository notificationRepo;
-    private final NotificationChannelRepository channelRepo;
-    private final NotificationStatusRepository statusRepo;
     private final WorkerRepository workerRepo;
     private final CameraRepository cameraRepo;
     private final SiteRepository siteRepo;
-    private final SiteContactRepository siteContactRepo;
-    private final ZoneRepository zoneRepo;
-    private final TelegramNotificationService telegramService;
-    private final TelegramProperties telegramProperties;
+    private final IncidentNotificationService notificationService;
 
     public IncidentService(IncidentRepository incidentRepo,
                             EvidenceRepository evidenceRepo,
-                            NotificationRepository notificationRepo,
-                            NotificationChannelRepository channelRepo,
-                            NotificationStatusRepository statusRepo,
                             WorkerRepository workerRepo,
                             CameraRepository cameraRepo,
                             SiteRepository siteRepo,
-                            SiteContactRepository siteContactRepo,
-                            ZoneRepository zoneRepo,
-                            TelegramNotificationService telegramService,
-                            TelegramProperties telegramProperties) {
+                            IncidentNotificationService notificationService) {
         this.incidentRepo = incidentRepo;
         this.evidenceRepo = evidenceRepo;
-        this.notificationRepo = notificationRepo;
-        this.channelRepo = channelRepo;
-        this.statusRepo = statusRepo;
         this.workerRepo = workerRepo;
         this.cameraRepo = cameraRepo;
         this.siteRepo = siteRepo;
-        this.siteContactRepo = siteContactRepo;
-        this.zoneRepo = zoneRepo;
-        this.telegramService = telegramService;
-        this.telegramProperties = telegramProperties;
+        this.notificationService = notificationService;
     }
 
     public Mono<IncidentResponse> register(IncidentRequest request) {
@@ -103,7 +71,7 @@ public class IncidentService {
                     return incidentRepo.save(incident)
                             .flatMap(saved -> evidenceRepo.save(new Evidence(null, saved.id(), request.frameB64(), now))
                                     .thenReturn(saved))
-                            .flatMap(saved -> notifyTelegram(saved, camera, site, request.frameB64())
+                            .flatMap(saved -> notificationService.notify(saved, camera, site, request.frameB64())
                                     .thenReturn(saved));
                 })
                 .map(IncidentResponse::from);
@@ -120,62 +88,5 @@ public class IncidentService {
         return incidentRepo.findById(id)
                 .map(IncidentResponse::from)
                 .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Incident not found")));
-    }
-
-    private Mono<Void> notifyTelegram(Incident incident, Camera camera, Site site, String frameB64) {
-        return Mono.zip(resolveChatIds(site.id()), resolveZoneName(camera))
-                .flatMap(resolved -> {
-                    List<String> chatIds = resolved.getT1();
-                    String zoneName = resolved.getT2();
-                    if (chatIds.isEmpty()) {
-                        return recordNotification(incident.id(), STATUS_FAILED,
-                                "Sin chat de Telegram configurado para la obra");
-                    }
-                    return Flux.fromIterable(chatIds)
-                            .flatMap(chatId -> sendAndRecord(chatId, incident, camera, site, zoneName, frameB64))
-                            .then();
-                });
-    }
-
-    private Mono<String> resolveZoneName(Camera camera) {
-        if (camera.zoneId() == null) {
-            return Mono.just("");
-        }
-        return zoneRepo.findById(camera.zoneId()).map(Zone::name).defaultIfEmpty("");
-    }
-
-    /** Contactos de la obra con Telegram configurado; si no hay, cae al chat global (fail-safe). */
-    private Mono<List<String>> resolveChatIds(Long siteId) {
-        return siteContactRepo.findBySiteIdAndTelegramChatIdIsNotNullAndActiveTrue(siteId)
-                .map(SiteContact::telegramChatId)
-                .collectList()
-                .map(chatIds -> {
-                    if (!chatIds.isEmpty()) {
-                        return chatIds;
-                    }
-                    String fallback = telegramProperties.chatId();
-                    return (fallback != null && !fallback.isBlank()) ? List.of(fallback) : List.<String>of();
-                });
-    }
-
-    private Mono<Void> sendAndRecord(String chatId, Incident incident, Camera camera, Site site,
-                                      String zoneName, String frameB64) {
-        return telegramService.sendIncidentAlert(chatId, incident, camera, site, zoneName, frameB64)
-                .then(recordNotification(incident.id(), STATUS_SENT, null))
-                .onErrorResume(ex -> recordNotification(incident.id(), STATUS_FAILED, ex.getMessage()));
-    }
-
-    private Mono<Void> recordNotification(Long incidentId, String statusCode, String errorMsg) {
-        return Mono.zip(channelRepo.findByCode(CHANNEL_TELEGRAM), statusRepo.findByCode(statusCode))
-                .flatMap(codes -> {
-                    LocalDateTime now = LocalDateTime.now();
-                    Notification notification = new Notification(
-                            null, incidentId, codes.getT1().id(), codes.getT2().id(),
-                            STATUS_SENT.equals(statusCode) ? now : null,
-                            errorMsg, now
-                    );
-                    return notificationRepo.save(notification);
-                })
-                .then();
     }
 }

@@ -1,5 +1,9 @@
 package com.safevision.back.service;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
+
 import com.safevision.back.dto.WorkerRequest;
 import com.safevision.back.model.Worker;
 import com.safevision.back.repository.WorkerRepository;
@@ -16,10 +20,6 @@ import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
 import java.time.LocalDateTime;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 @DisplayName("WorkerService — CRUD de trabajadores")

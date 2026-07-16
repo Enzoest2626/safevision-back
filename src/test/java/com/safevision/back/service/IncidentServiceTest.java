@@ -1,10 +1,25 @@
 package com.safevision.back.service;
 
-import com.safevision.back.config.TelegramProperties;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
 import com.safevision.back.dto.IncidentRequest;
-import com.safevision.back.dto.IncidentResponse;
-import com.safevision.back.model.*;
-import com.safevision.back.repository.*;
+import com.safevision.back.model.Camera;
+import com.safevision.back.model.Evidence;
+import com.safevision.back.model.Incident;
+import com.safevision.back.model.Site;
+import com.safevision.back.model.Worker;
+import com.safevision.back.repository.CameraRepository;
+import com.safevision.back.repository.EvidenceRepository;
+import com.safevision.back.repository.IncidentRepository;
+import com.safevision.back.repository.SiteRepository;
+import com.safevision.back.repository.WorkerRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -21,30 +36,18 @@ import reactor.test.StepVerifier;
 import java.time.LocalDateTime;
 import java.util.List;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.*;
-
 @ExtendWith(MockitoExtension.class)
-@DisplayName("IncidentService — HU10 (registro de incidente + alerta Telegram)")
+@DisplayName("IncidentService — HU10 (registro de incidente, delega notificación)")
 class IncidentServiceTest {
 
     @Mock private IncidentRepository incidentRepo;
     @Mock private EvidenceRepository evidenceRepo;
-    @Mock private NotificationRepository notificationRepo;
-    @Mock private NotificationChannelRepository channelRepo;
-    @Mock private NotificationStatusRepository statusRepo;
     @Mock private WorkerRepository workerRepo;
     @Mock private CameraRepository cameraRepo;
     @Mock private SiteRepository siteRepo;
-    @Mock private SiteContactRepository siteContactRepo;
-    @Mock private ZoneRepository zoneRepo;
-    @Mock private TelegramNotificationService telegramService;
+    @Mock private IncidentNotificationService notificationService;
 
     private IncidentService service;
-    private TelegramProperties telegramProperties;
 
     private final Worker worker = new Worker(10L, 1L, 3, "Juan", "Perez", "Albañil",
             true, LocalDateTime.now(), "system", LocalDateTime.now(), "system");
@@ -52,9 +55,6 @@ class IncidentServiceTest {
             true, LocalDateTime.now(), "system", LocalDateTime.now(), "system");
     private final Site site = new Site(1L, "Main-Site", "Lima", true,
             LocalDateTime.now(), "system", LocalDateTime.now(), "system");
-    private final NotificationChannel telegramChannel = new NotificationChannel(1L, "TELEGRAM", "Telegram");
-    private final NotificationStatus sentStatus = new NotificationStatus(2L, "SENT", "Enviado");
-    private final NotificationStatus failedStatus = new NotificationStatus(3L, "FAILED", "Fallido");
 
     private IncidentRequest requestFor(String siteName) {
         return new IncidentRequest(3, List.of("helmet", "vest"),
@@ -63,10 +63,7 @@ class IncidentServiceTest {
 
     @BeforeEach
     void setUp() {
-        telegramProperties = new TelegramProperties("bot-token", "GLOBAL-CHAT");
-        service = new IncidentService(incidentRepo, evidenceRepo, notificationRepo, channelRepo,
-                statusRepo, workerRepo, cameraRepo, siteRepo, siteContactRepo, zoneRepo,
-                telegramService, telegramProperties);
+        service = new IncidentService(incidentRepo, evidenceRepo, workerRepo, cameraRepo, siteRepo, notificationService);
 
         lenient().when(workerRepo.findByCode(3)).thenReturn(Mono.just(worker));
         lenient().when(cameraRepo.findByCode("CAM-01")).thenReturn(Mono.just(camera));
@@ -78,22 +75,12 @@ class IncidentServiceTest {
                             i.missingEpp(), i.occurredAt(), i.createdAt()));
                 });
         lenient().when(evidenceRepo.save(any(Evidence.class))).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
-        lenient().when(notificationRepo.save(any(Notification.class))).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
-        lenient().when(channelRepo.findByCode("TELEGRAM")).thenReturn(Mono.just(telegramChannel));
-        lenient().when(statusRepo.findByCode("SENT")).thenReturn(Mono.just(sentStatus));
-        lenient().when(statusRepo.findByCode("FAILED")).thenReturn(Mono.just(failedStatus));
+        lenient().when(notificationService.notify(any(), any(), any(), anyString())).thenReturn(Mono.empty());
     }
 
     @Test
-    @DisplayName("Incidente válido con contacto Telegram de la obra → persiste y notifica SENT")
-    void registraIncidente_conContactoDeObra_notificaSent() {
-        SiteContact contact = new SiteContact(5L, 1L, "Supervisor", "999999999", "111222333",
-                true, LocalDateTime.now(), "system", LocalDateTime.now(), "system");
-        when(siteContactRepo.findBySiteIdAndTelegramChatIdIsNotNullAndActiveTrue(1L))
-                .thenReturn(Flux.just(contact));
-        when(telegramService.sendIncidentAlert(eq("111222333"), any(), any(), any(), anyString(), anyString()))
-                .thenReturn(Mono.empty());
-
+    @DisplayName("Incidente válido → persiste incidente + evidencia y delega la notificación")
+    void registraIncidente_valido_persisteYDelegaNotificacion() {
         StepVerifier.create(service.register(requestFor("Main-Site")))
                 .assertNext(response -> {
                     assertThat(response.id()).isEqualTo(100L);
@@ -104,66 +91,61 @@ class IncidentServiceTest {
                 })
                 .verifyComplete();
 
-        verify(telegramService).sendIncidentAlert(eq("111222333"), any(), any(), any(), anyString(), anyString());
-        verify(notificationRepo).save(argThat(n -> n.statusId().equals(sentStatus.id())));
+        verify(evidenceRepo).save(any(Evidence.class));
+        verify(notificationService).notify(any(Incident.class), eq(camera), eq(site), anyString());
     }
 
     @Test
-    @DisplayName("Cámara con zona asignada → el nombre de zona viaja en la alerta de Telegram")
-    void registraIncidente_camaraConZona_incluyeNombreDeZona() {
-        Camera cameraConZona = new Camera(20L, 1L, 7L, "CAM-01", "Entrada", "10.0.0.5", null,
-                true, LocalDateTime.now(), "system", LocalDateTime.now(), "system");
-        Zone zone = new Zone(7L, 1L, "Piso 2 - Construcción", true,
-                LocalDateTime.now(), "system", LocalDateTime.now(), "system");
-        when(cameraRepo.findByCode("CAM-01")).thenReturn(Mono.just(cameraConZona));
-        when(zoneRepo.findById(7L)).thenReturn(Mono.just(zone));
-        when(siteContactRepo.findBySiteIdAndTelegramChatIdIsNotNullAndActiveTrue(1L)).thenReturn(Flux.empty());
-        when(telegramService.sendIncidentAlert(anyString(), any(), any(), any(), eq("Piso 2 - Construcción"), anyString()))
-                .thenReturn(Mono.empty());
+    @DisplayName("La notificación delegada recibe el incidente con trabajador, EPP y timestamp correctos")
+    void registraIncidente_notificacionRecibeDatosCorrectos() {
+        LocalDateTime timestampEsperado = LocalDateTime.of(2026, 6, 24, 13, 30);
 
         StepVerifier.create(service.register(requestFor("Main-Site")))
                 .assertNext(response -> assertThat(response.id()).isEqualTo(100L))
                 .verifyComplete();
 
-        verify(telegramService).sendIncidentAlert(
-                anyString(), any(), any(), any(), eq("Piso 2 - Construcción"), anyString());
+        ArgumentCaptor<Incident> incidentCaptor = ArgumentCaptor.forClass(Incident.class);
+        verify(notificationService).notify(incidentCaptor.capture(), eq(camera), eq(site), anyString());
+        Incident incidentEnviado = incidentCaptor.getValue();
+
+        assertThat(incidentEnviado.workerId()).isEqualTo(10L);
+        assertThat(incidentEnviado.missingEpp()).containsExactly("helmet", "vest");
+        assertThat(incidentEnviado.occurredAt()).isEqualTo(timestampEsperado);
     }
 
     @Test
-    @DisplayName("Obra sin contactos Telegram → usa el chat_id global como fallback")
-    void registraIncidente_sinContactosDeObra_usaFallbackGlobal() {
-        when(siteContactRepo.findBySiteIdAndTelegramChatIdIsNotNullAndActiveTrue(1L)).thenReturn(Flux.empty());
-        when(telegramService.sendIncidentAlert(eq("GLOBAL-CHAT"), any(), any(), any(), anyString(), anyString()))
-                .thenReturn(Mono.empty());
-
-        StepVerifier.create(service.register(requestFor("Main-Site")))
-                .assertNext(response -> assertThat(response.id()).isEqualTo(100L))
-                .verifyComplete();
-
-        verify(telegramService).sendIncidentAlert(eq("GLOBAL-CHAT"), any(), any(), any(), anyString(), anyString());
-    }
-
-    @Test
-    @DisplayName("Falla el envío a Telegram → incidente igual se registra y notificación queda FAILED")
-    void registraIncidente_fallaTelegram_persisteIncidenteYNotificacionFallida() {
-        when(siteContactRepo.findBySiteIdAndTelegramChatIdIsNotNullAndActiveTrue(1L)).thenReturn(Flux.empty());
-        when(telegramService.sendIncidentAlert(eq("GLOBAL-CHAT"), any(), any(), any(), anyString(), anyString()))
-                .thenReturn(Mono.error(new IllegalStateException("Telegram respondió 401")));
-
-        StepVerifier.create(service.register(requestFor("Main-Site")))
-                .assertNext(response -> assertThat(response.id()).isEqualTo(100L))
-                .verifyComplete();
-
-        verify(notificationRepo).save(argThat(n ->
-                n.statusId().equals(failedStatus.id()) && n.errorMsg().contains("401")));
-    }
-
-    @Test
-    @DisplayName("Worker desconocido → 400 BAD_REQUEST, nada se persiste")
+    @DisplayName("Worker desconocido → 400 BAD_REQUEST, nada se persiste ni se notifica")
     void registraIncidente_workerDesconocido_lanzaBadRequest() {
         when(workerRepo.findByCode(3)).thenReturn(Mono.empty());
 
         StepVerifier.create(service.register(requestFor("Main-Site")))
+                .expectErrorMatches(ex -> ex instanceof ResponseStatusException rse
+                        && rse.getStatusCode() == HttpStatus.BAD_REQUEST)
+                .verify();
+
+        verify(incidentRepo, never()).save(any());
+        verify(notificationService, never()).notify(any(), any(), any(), anyString());
+    }
+
+    @Test
+    @DisplayName("Cámara desconocida → 400 BAD_REQUEST, nada se persiste")
+    void registraIncidente_camaraDesconocida_lanzaBadRequest() {
+        when(cameraRepo.findByCode("CAM-01")).thenReturn(Mono.empty());
+
+        StepVerifier.create(service.register(requestFor("Main-Site")))
+                .expectErrorMatches(ex -> ex instanceof ResponseStatusException rse
+                        && rse.getStatusCode() == HttpStatus.BAD_REQUEST)
+                .verify();
+
+        verify(incidentRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("Obra desconocida → 400 BAD_REQUEST, nada se persiste")
+    void registraIncidente_obraDesconocida_lanzaBadRequest() {
+        when(siteRepo.findByName("Obra-Fantasma")).thenReturn(Mono.empty());
+
+        StepVerifier.create(service.register(requestFor("Obra-Fantasma")))
                 .expectErrorMatches(ex -> ex instanceof ResponseStatusException rse
                         && rse.getStatusCode() == HttpStatus.BAD_REQUEST)
                 .verify();
@@ -182,77 +164,17 @@ class IncidentServiceTest {
                 .verify();
     }
 
-    // ── CP28: Notificación push con datos correctos ──────────────────────────
-
     @Test
-    @DisplayName("CP28 — Notificación push incluye trabajador, EPP y timestamp correctos")
-    void cp28_notificacionPush_incluyeTrabajadorEppYTimestamp() {
-        SiteContact contact = new SiteContact(5L, 1L, "Supervisor", "999999999", "111222333",
-                true, LocalDateTime.now(), "system", LocalDateTime.now(), "system");
-        LocalDateTime timestampEsperado = LocalDateTime.of(2026, 6, 24, 13, 30);
-        when(siteContactRepo.findBySiteIdAndTelegramChatIdIsNotNullAndActiveTrue(1L))
-                .thenReturn(Flux.just(contact));
-        when(telegramService.sendIncidentAlert(eq("111222333"), any(), any(), any(), anyString(), anyString()))
-                .thenReturn(Mono.empty());
+    @DisplayName("findByFilter sin from/to → usa rango por defecto (2000-01-01 .. ahora)")
+    void buscarPorFiltro_sinRango_usaRangoPorDefecto() {
+        Incident sample = new Incident(100L, 10L, 20L, 1L,
+                new String[]{"helmet"}, LocalDateTime.now(), LocalDateTime.now());
+        when(incidentRepo.findByFilter(eq(1L), any(), any(), any())).thenReturn(Flux.just(sample));
 
-        StepVerifier.create(service.register(requestFor("Main-Site")))
-                .assertNext(response -> {
-                    System.out.println("\n[CP28] Notificación push por incumplimiento confirmado:");
-                    System.out.println("       workerId    = " + response.workerId());
-                    System.out.println("       missingEpp  = " + response.missingEpp());
-                    System.out.println("       occurredAt  = " + response.occurredAt());
-
-                    assertThat(response.workerId()).isEqualTo(10L);
-                    assertThat(response.missingEpp()).containsExactly("helmet", "vest");
-                    assertThat(response.occurredAt()).isEqualTo(timestampEsperado);
-                })
+        StepVerifier.create(service.findByFilter(1L, null, null, null))
+                .expectNextCount(1)
                 .verifyComplete();
 
-        ArgumentCaptor<Incident> incidentCaptor = ArgumentCaptor.forClass(Incident.class);
-        verify(telegramService).sendIncidentAlert(eq("111222333"), incidentCaptor.capture(), any(), any(), anyString(), anyString());
-        Incident incidentEnviado = incidentCaptor.getValue();
-
-        boolean correcto = incidentEnviado.workerId().equals(10L)
-                && List.of(incidentEnviado.missingEpp()).equals(List.of("helmet", "vest"))
-                && incidentEnviado.occurredAt().equals(timestampEsperado);
-        System.out.println("       incidente enviado a Telegram → workerId=" + incidentEnviado.workerId()
-                + ", missingEpp=" + List.of(incidentEnviado.missingEpp())
-                + ", occurredAt=" + incidentEnviado.occurredAt());
-        System.out.println("[CP28] Notificación con trabajador, EPP y timestamp correctos: " + correcto + " => PASA");
-
-        assertThat(incidentEnviado.workerId()).isEqualTo(10L);
-        assertThat(incidentEnviado.missingEpp()).containsExactly("helmet", "vest");
-        assertThat(incidentEnviado.occurredAt()).isEqualTo(timestampEsperado);
-    }
-
-    // ── CP29: Bot de Telegram inaccesible / rate-limit ────────────────────────
-
-    @Test
-    @DisplayName("CP29 — Bot de Telegram con rate-limit (mockeado) registra FAILED sin pérdida silenciosa")
-    void cp29_botTelegramRateLimit_registraFailedSinPerdidaSilenciosa() {
-        when(siteContactRepo.findBySiteIdAndTelegramChatIdIsNotNullAndActiveTrue(1L)).thenReturn(Flux.empty());
-        when(telegramService.sendIncidentAlert(eq("GLOBAL-CHAT"), any(), any(), any(), anyString(), anyString()))
-                .thenReturn(Mono.error(new IllegalStateException("Telegram respondió 429: Too Many Requests")));
-
-        StepVerifier.create(service.register(requestFor("Main-Site")))
-                .assertNext(response -> assertThat(response.id()).isEqualTo(100L))
-                .verifyComplete();
-
-        ArgumentCaptor<Notification> notificationCaptor = ArgumentCaptor.forClass(Notification.class);
-        verify(notificationRepo).save(notificationCaptor.capture());
-        Notification saved = notificationCaptor.getValue();
-
-        boolean registradoFailed = saved.statusId().equals(failedStatus.id())
-                && saved.errorMsg() != null && saved.errorMsg().contains("429");
-
-        System.out.println("\n[CP29] Bot de Telegram inaccesible (rate-limit 429, mockeado):");
-        System.out.println("       incidentId persistido  = " + saved.incidentId());
-        System.out.println("       notification.statusId  = " + saved.statusId() + " (FAILED=" + failedStatus.id() + ")");
-        System.out.println("       notification.errorMsg  = " + saved.errorMsg());
-        System.out.println("       Nota: IncidentService no implementa reintento — onErrorResume va directo a FAILED.");
-        System.out.println("[CP29] Registro FAILED sin pérdida silenciosa del evento: " + registradoFailed + " => PASA");
-
-        assertThat(saved.statusId()).isEqualTo(failedStatus.id());
-        assertThat(saved.errorMsg()).contains("429");
+        verify(incidentRepo).findByFilter(eq(1L), any(), eq(LocalDateTime.of(2000, 1, 1, 0, 0)), any());
     }
 }

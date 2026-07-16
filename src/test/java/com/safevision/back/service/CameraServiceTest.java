@@ -1,5 +1,9 @@
 package com.safevision.back.service;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
+
 import com.safevision.back.dto.CameraRequest;
 import com.safevision.back.model.Camera;
 import com.safevision.back.repository.CameraRepository;
@@ -16,10 +20,6 @@ import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
 import java.time.LocalDateTime;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 @DisplayName("CameraService — CRUD de cámaras")

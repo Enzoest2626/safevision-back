@@ -22,17 +22,30 @@ import java.util.Locale;
 @Service
 public class TelegramNotificationService {
 
+    private static final String TELEGRAM_API_BASE_URL = "https://api.telegram.org";
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("dd/MM/yyyy");
     private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("hh:mm:ss a", Locale.forLanguageTag("es"));
 
     private final WebClient webClient;
     private final TelegramProperties properties;
 
-    public TelegramNotificationService(TelegramProperties properties) {
+    /**
+     * Recibe el {@link WebClient.Builder} (autoconfigurado por Spring Boot) en vez de
+     * construir el WebClient internamente, para poder inyectar un ExchangeFunction
+     * mockeado en tests unitarios sin llamadas HTTP reales.
+     */
+    public TelegramNotificationService(WebClient.Builder webClientBuilder, TelegramProperties properties) {
+        this(webClientBuilder, properties, TELEGRAM_API_BASE_URL);
+    }
+
+    /**
+     * Constructor with an injectable base URL for deterministic HTTP integration tests.
+     * Production wiring continues to use the Telegram Bot API base URL above.
+     */
+    TelegramNotificationService(WebClient.Builder webClientBuilder, TelegramProperties properties,
+                                String apiBaseUrl) {
         this.properties = properties;
-        this.webClient = WebClient.builder()
-                .baseUrl("https://api.telegram.org")
-                .build();
+        this.webClient = webClientBuilder.baseUrl(apiBaseUrl).build();
     }
 
     public Mono<Void> sendIncidentAlert(String chatId, Incident incident, Camera camera, Site site,
