@@ -2,25 +2,40 @@
 
 Levanta todo el entorno de demo (RDS + 2 EC2, ya configuradas y con el código
 corriendo) con un solo comando. Sin SSH manual, sin instalar nada a mano — el
-bootstrap completo vive en `UserData` dentro del template.
+bootstrap completo vive en `UserData` dentro del template: instala Docker y
+hace `docker pull` de las imágenes ya publicadas en ECR.
 
-Pensado para crear y borrar el stack por sesión (ensayo, demo real) — no para
-dejarlo prendido todo el tiempo.
+Dos capas con ciclos de vida distintos:
+- **Persistente** (no se borra con `down`): el bucket S3 (SQL + videos) y los
+  2 repos ECR (imágenes de backend y CV) — evita tener que resubir varios GB
+  cada vez que se recrea el stack.
+- **Efímero** (se crea/borra por sesión): el stack de CloudFormation (RDS +
+  2 EC2 + Security Groups + IAM). Pensado para crear y borrar por sesión
+  (ensayo, demo real) — no para dejarlo prendido todo el tiempo.
 
 ## Prerequisitos (una sola vez)
 
-1. **AWS CLI configurado** con tus credenciales reales (`aws configure`).
-   Todo lo de este README corre contra tu cuenta real de AWS — nada de
-   LocalStack acá.
+1. **Docker Desktop / Rancher Desktop corriendo** en tu máquina — `deploy.sh
+   build` compila las imágenes del backend y del CV localmente antes de
+   subirlas a ECR.
 
-2. **Key pair EC2** (si no tienes una todavía):
+2. **AWS CLI configurado con un profile nombrado** (no el default):
+   ```bash
+   aws configure --profile safevision-demo
+   # pide Access Key ID, Secret Access Key, region (us-east-1), output format
+   ```
+   `deploy.sh` exige `AWS_PROFILE` en `deploy.env` y lo usa en cada comando —
+   no cae al profile "default" solo. Todo lo de este README corre contra tu
+   cuenta real de AWS — nada de LocalStack acá.
+
+4. **Key pair EC2** (si no tienes una todavía):
    ```bash
    aws ec2 create-key-pair --key-name safevision-demo --region us-east-1 \
      --query 'KeyMaterial' --output text > safevision-demo.pem
    chmod 400 safevision-demo.pem
    ```
 
-3. **VPC y subnet** (la VPC default de tu cuenta sirve):
+5. **VPC y subnet** (la VPC default de tu cuenta sirve):
    ```bash
    aws ec2 describe-vpcs --filters Name=is-default,Values=true \
      --query 'Vpcs[0].VpcId' --output text --region us-east-1
@@ -29,13 +44,13 @@ dejarlo prendido todo el tiempo.
      --query 'Subnets[0].SubnetId' --output text --region us-east-1
    ```
 
-4. **Tu IP pública** en formato CIDR:
+6. **Tu IP pública** en formato CIDR:
    ```bash
    curl ifconfig.me
    # anota el resultado y agrégale /32, ej: 190.1.2.3/32
    ```
 
-5. **Configurar `infra/deploy.env`**:
+7. **Configurar `infra/deploy.env`**:
    ```bash
    cd infra
    cp deploy.env.example deploy.env
@@ -50,18 +65,21 @@ dejarlo prendido todo el tiempo.
 
 ```bash
 cd infra
-./deploy.sh up       # sube assets a S3 + crea el stack + conecta el webhook CV<->backend + muestra los resultados
+./deploy.sh up       # build+push imagenes a ECR + sube SQL/videos a S3 + crea el stack + conecta el webhook CV<->backend + muestra los resultados
 ./deploy.sh status   # ver estado / Outputs en cualquier momento
-./deploy.sh upload   # solo re-sube assets (después de corregir algo, sin tocar el stack)
+./deploy.sh build    # solo build+push de las imagenes Docker a ECR (después de corregir código, sin tocar el stack)
+./deploy.sh upload   # solo re-sube SQL/videos a S3 (sin tocar el stack)
 ./deploy.sh wire     # solo re-conecta el webhook (si ese paso automático de 'up' falló)
-./deploy.sh down     # borra todo el stack
+./deploy.sh down     # borra el stack (RDS + 2 EC2) — el bucket S3 y los repos ECR no se tocan
 ```
 
-`up` hace todo de punta a punta: compila el JAR, sube JAR + SQL + código CV +
-modelos + videos a S3, crea el stack, espera a que termine (~10-15 min, RDS
-es lo que más tarda), le avisa al backend dónde está el CV (para el webhook
-de recarga de parámetros, HU04 — ver más abajo) y muestra las IPs / endpoint
-/ comandos SSH al final.
+`up` hace todo de punta a punta: compila y sube las imágenes Docker del
+backend y del CV a ECR, sube SQL (schema+seed) y los videos de prueba a S3,
+crea el stack, espera a que termine (~10-15 min, RDS es lo que más tarda),
+le avisa al backend dónde está el CV (para el webhook de recarga de
+parámetros, HU04 — ver más abajo) y muestra las IPs / endpoint / comandos
+SSH al final. Cada EC2 arranca instalando Docker y haciendo `docker pull` de
+su imagen — no compila nada en el momento del boot.
 
 ### El webhook backend → CV (recarga de parámetros en caliente)
 
@@ -79,9 +97,10 @@ Si el webhook no llega a conectarse por algún motivo, no rompe nada: el CV
 sigue sincronizando solo, cada 60s, vía polling — el webhook es una
 optimización de latencia, no una dependencia dura.
 
-Si corregís algo en el código antes del jueves: `./deploy.sh upload` sube lo
-nuevo a S3 — el **próximo** `up` (o un `down` + `up`) lo toma automáticamente,
-sin tocar el template.
+Si corregís algo en el código antes del jueves: `./deploy.sh build` compila y
+sube la imagen nueva a ECR — el **próximo** `up` (o un `down` + `up`) la toma
+automáticamente al hacer `docker pull`, sin tocar el template. Si solo
+cambiaste el SQL o los videos, `./deploy.sh upload` alcanza.
 
 ## Verificar que todo levantó solo
 
@@ -139,5 +158,6 @@ esperando) lo detecta solo y empieza a mandar alertas.
 ```
 
 Borra RDS, las 2 EC2, Security Groups, IAM Role/InstanceProfile y las 2
-Elastic IP — sin recursos huérfanos. El bucket S3 **no se borra** (los
-assets quedan listos para el próximo `up`, costo insignificante).
+Elastic IP — sin recursos huérfanos. El bucket S3 y los 2 repos ECR **no se
+borran** (quedan listos para el próximo `up`; storage de unos pocos GB,
+costo insignificante).

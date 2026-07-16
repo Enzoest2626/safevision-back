@@ -1,10 +1,12 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   SafeVision — demo en vivo. Crea RDS + 2 EC2 (backend, CV) con bootstrap
-  100% automatico via UserData: instala el runtime, baja el codigo/modelos/
-  videos de un bucket S3 poblado de antemano (ver infra/upload-assets.sh) y
-  deja los servicios corriendo solos, sin SSH manual. Stack pensado para
-  crearse y borrarse por sesion de demo (aws cloudformation delete-stack).
+  100% automatico via UserData: instala Docker, hace pull de las imagenes ya
+  publicadas en ECR (ver infra/deploy.sh, funcion do_build_and_push) y deja
+  los servicios corriendo solos, sin SSH manual. Los repositorios ECR y el
+  bucket S3 de assets (SQL + videos) son recursos persistentes, fuera de
+  este stack — solo compute (RDS + EC2) es efimero, pensado para crearse y
+  borrarse por sesion de demo (aws cloudformation delete-stack).
 
 Parameters:
   VpcId:
@@ -34,9 +36,24 @@ Parameters:
   AssetsBucketName:
     Type: String
     Description: >
-      Bucket S3 (ya existente, poblado con infra/upload-assets.sh) con
-      backend/app.jar, sql/init-schema.sql, sql/seed-data.sql, cv-app/,
-      models/, videos/.
+      Bucket S3 (ya existente, poblado con infra/deploy.sh upload) con
+      sql/init-schema.sql, sql/seed-data.sql y videos/. El JAR y el codigo
+      del modulo CV ya no viven aca — van dentro de las imagenes Docker en
+      ECR (ver EcrBackendRepoName / EcrCvRepoName).
+
+  EcrBackendRepoName:
+    Type: String
+    Default: safevision-backend
+    Description: >
+      Nombre del repositorio ECR (ya existente, poblado con
+      infra/deploy.sh build) con la imagen del backend.
+
+  EcrCvRepoName:
+    Type: String
+    Default: safevision-cv
+    Description: >
+      Nombre del repositorio ECR (ya existente, poblado con
+      infra/deploy.sh build) con la imagen del modulo CV.
 
   DbMasterPassword:
     Type: String
@@ -125,7 +142,7 @@ Resources:
           Value: sg-rds
 
   # ────────────────────────────────────────────────────────────
-  # IAM — lectura del bucket de assets desde las EC2
+  # IAM — lectura del bucket de assets (SQL/videos) + pull de ECR
   # ────────────────────────────────────────────────────────────
 
   AssetsReadRole:
@@ -150,6 +167,23 @@ Resources:
                 Resource:
                   - !Sub arn:aws:s3:::${AssetsBucketName}
                   - !Sub arn:aws:s3:::${AssetsBucketName}/*
+        - PolicyName: PullEcrImages
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # GetAuthorizationToken es una accion a nivel de cuenta - ECR no
+              # soporta permisos a nivel de recurso para ella, Resource debe ser '*'.
+              - Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                Resource:
+                  - !Sub arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${EcrBackendRepoName}
+                  - !Sub arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${EcrCvRepoName}
 
   AssetsInstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -169,7 +203,7 @@ Resources:
       FromPort: 8001
       ToPort: 8001
       SourceSecurityGroupId: !GetAtt SgBackend.GroupId
-      Description: Webhook de recarga de parametros (backend -> CV, HU04)
+      Description: Webhook de recarga de parametros (backend a CV, HU04)
 
   # ────────────────────────────────────────────────────────────
   # RDS
@@ -227,25 +261,32 @@ Resources:
 
           export DEBIAN_FRONTEND=noninteractive
           apt-get update -qq
-          apt-get install -y -qq wget gnupg unzip curl postgresql-client
+          apt-get install -y -qq ca-certificates curl gnupg unzip postgresql-client
 
+          echo "--- Instalando Docker ---"
+          install -m 0755 -d /etc/apt/keyrings
+          curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+          chmod a+r /etc/apt/keyrings/docker.asc
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+            > /etc/apt/sources.list.d/docker.list
+          apt-get update -qq
+          apt-get install -y -qq docker-ce docker-ce-cli containerd.io
+          usermod -aG docker ubuntu
+
+          echo "--- Instalando AWS CLI v2 ---"
           curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
           unzip -q /tmp/awscliv2.zip -d /tmp
           /tmp/aws/install
           rm -rf /tmp/awscliv2.zip /tmp/aws
 
-          wget -q -O- https://apt.corretto.aws/corretto.key | gpg --dearmor -o /usr/share/keyrings/corretto-keyring.gpg
-          echo "deb [signed-by=/usr/share/keyrings/corretto-keyring.gpg] https://apt.corretto.aws stable main" > /etc/apt/sources.list.d/corretto.list
-          apt-get update -qq
-          apt-get install -y -qq java-21-amazon-corretto-jdk
+          echo "--- Login a ECR + pull de la imagen del backend ---"
+          aws ecr get-login-password --region ${AWS::Region} \
+            | docker login --username AWS --password-stdin ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com
+          docker pull ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EcrBackendRepoName}:latest
 
           mkdir -p /opt/safevision /etc/safevision
-          chown ubuntu:ubuntu /opt/safevision /etc/safevision
-
-          aws s3 cp s3://${AssetsBucketName}/backend/app.jar /opt/safevision/app.jar
           aws s3 cp s3://${AssetsBucketName}/sql/init-schema.sql /opt/safevision/init-schema.sql
           aws s3 cp s3://${AssetsBucketName}/sql/seed-data.sql /opt/safevision/seed-data.sql
-          chown ubuntu:ubuntu /opt/safevision/app.jar
 
           echo "Esperando a que RDS acepte conexiones..."
           until pg_isready -h ${RDSInstance.Endpoint.Address} -p 5432 -U safevision >/dev/null 2>&1; do
@@ -260,7 +301,7 @@ Resources:
 
           cat > /etc/safevision/backend.env <<ENVEOF
           SPRING_PROFILES_ACTIVE=prd
-          SPRING_R2DBC_URL=r2dbc:postgresql://${RDSInstance.Endpoint.Address}:5432/safevision
+          SPRING_R2DBC_URL=r2dbc:postgresql://${RDSInstance.Endpoint.Address}:5432/safevision?sslMode=REQUIRE
           SPRING_R2DBC_USERNAME=safevision
           SPRING_R2DBC_PASSWORD=${DbMasterPassword}
           ALERT_SERVICE_TOKEN=${AlertServiceToken}
@@ -270,17 +311,19 @@ Resources:
           ENVEOF
           chmod 600 /etc/safevision/backend.env
 
-          cat > /etc/systemd/system/safevision-back.service <<'UNITEOF'
+          cat > /etc/systemd/system/safevision-back.service <<UNITEOF
           [Unit]
-          Description=SafeVision Backend
-          After=network.target
+          Description=SafeVision Backend (Docker)
+          After=network.target docker.service
+          Requires=docker.service
 
           [Service]
           Type=simple
-          User=ubuntu
-          WorkingDirectory=/opt/safevision
+          User=root
           EnvironmentFile=/etc/safevision/backend.env
-          ExecStart=/usr/bin/java -jar /opt/safevision/app.jar
+          ExecStartPre=-/usr/bin/docker stop safevision-back
+          ExecStartPre=-/usr/bin/docker rm safevision-back
+          ExecStart=/usr/bin/docker run --rm --name safevision-back -p 8080:8080 --env-file /etc/safevision/backend.env ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EcrBackendRepoName}:latest
           Restart=always
           RestartSec=5
 
@@ -326,40 +369,33 @@ Resources:
 
                 export DEBIAN_FRONTEND=noninteractive
                 apt-get update -qq
-                apt-get install -y -qq python3-pip python3-venv python3-dev ffmpeg curl unzip
+                apt-get install -y -qq ca-certificates curl gnupg ffmpeg unzip
 
+                echo "--- Instalando Docker ---"
+                install -m 0755 -d /etc/apt/keyrings
+                curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+                chmod a+r /etc/apt/keyrings/docker.asc
+                echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+                  > /etc/apt/sources.list.d/docker.list
+                apt-get update -qq
+                apt-get install -y -qq docker-ce docker-ce-cli containerd.io
+                usermod -aG docker ubuntu
+
+                echo "--- Instalando AWS CLI v2 ---"
                 curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
                 unzip -q /tmp/awscliv2.zip -d /tmp
                 /tmp/aws/install
                 rm -rf /tmp/awscliv2.zip /tmp/aws
 
-                su - ubuntu -c "python3 -m venv /home/ubuntu/venv"
-                su - ubuntu -c "/home/ubuntu/venv/bin/pip install --upgrade pip --quiet"
-                su - ubuntu -c "/home/ubuntu/venv/bin/pip install --quiet \
-                  torch==2.12.0 torchvision==0.27.0 --index-url https://download.pytorch.org/whl/cpu"
-                su - ubuntu -c "/home/ubuntu/venv/bin/pip install --quiet \
-                  ultralytics==8.4.51 \
-                  opencv-python-headless==4.13.0.92 \
-                  numpy==2.4.4 \
-                  Pillow \
-                  openvino==2026.2.0 \
-                  httpx==0.28.1 \
-                  python-dotenv==1.2.2 \
-                  fastapi==0.121.2 \
-                  uvicorn==0.38.0 \
-                  'lap>=0.5.12'"
+                echo "--- Login a ECR + pull de las imagenes (CV + MediaMTX) ---"
+                aws ecr get-login-password --region ${AWS::Region} \
+                  | docker login --username AWS --password-stdin ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com
+                docker pull ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EcrCvRepoName}:latest
+                docker pull bluenviron/mediamtx:latest
 
-                mkdir -p /home/ubuntu/models /home/ubuntu/videos /home/ubuntu/safevision-cv
-                aws s3 cp --recursive s3://${AssetsBucketName}/models/ /home/ubuntu/models/
+                mkdir -p /home/ubuntu/videos
                 aws s3 cp --recursive s3://${AssetsBucketName}/videos/ /home/ubuntu/videos/
-                aws s3 cp --recursive s3://${AssetsBucketName}/cv-app/ /home/ubuntu/safevision-cv/
-                chown -R ubuntu:ubuntu /home/ubuntu/models /home/ubuntu/videos /home/ubuntu/safevision-cv /home/ubuntu/venv
-
-                MEDIAMTX_URL=$(curl -s https://api.github.com/repos/bluenviron/mediamtx/releases/latest \
-                  | grep "browser_download_url.*linux_amd64.tar.gz" | cut -d '"' -f 4)
-                mkdir -p /home/ubuntu/mediamtx
-                curl -sL "$MEDIAMTX_URL" | tar -xz -C /home/ubuntu/mediamtx
-                chown -R ubuntu:ubuntu /home/ubuntu/mediamtx
+                chown -R ubuntu:ubuntu /home/ubuntu/videos
 
               - |
                 cat > /home/ubuntu/simulate_camera.sh <<'SCRIPTEOF'
@@ -385,23 +421,25 @@ Resources:
                 SITE_NAME=Obra-Principal
                 CAMERA_ID=CAM-01
                 COOLDOWN_SECONDS=60
-                MODEL_PATH=/home/ubuntu/models/best_int8_openvino_model
+                MODEL_PATH=models/yolov11s/exp2/weights/best_int8_openvino_model
                 DISPLAY_WINDOW=false
                 RELOAD_SERVER_PORT=8001
                 TZ=America/Lima
                 ENVEOF
                 chmod 600 /etc/safevision/cv.env
 
-                cat > /etc/systemd/system/mediamtx.service <<'UNITEOF'
+                cat > /etc/systemd/system/mediamtx.service <<UNITEOF
                 [Unit]
-                Description=MediaMTX RTSP Server
-                After=network.target
+                Description=MediaMTX RTSP Server (Docker)
+                After=network.target docker.service
+                Requires=docker.service
 
                 [Service]
                 Type=simple
-                User=ubuntu
-                WorkingDirectory=/home/ubuntu/mediamtx
-                ExecStart=/home/ubuntu/mediamtx/mediamtx
+                User=root
+                ExecStartPre=-/usr/bin/docker stop mediamtx
+                ExecStartPre=-/usr/bin/docker rm mediamtx
+                ExecStart=/usr/bin/docker run --rm --name mediamtx --network host bluenviron/mediamtx:latest
                 Restart=always
                 RestartSec=5
 
@@ -409,17 +447,19 @@ Resources:
                 WantedBy=multi-user.target
                 UNITEOF
 
-                cat > /etc/systemd/system/safevision-cv.service <<'UNITEOF'
+                cat > /etc/systemd/system/safevision-cv.service <<UNITEOF
                 [Unit]
-                Description=SafeVision CV Pipeline
-                After=network.target mediamtx.service
+                Description=SafeVision CV Pipeline (Docker)
+                After=network.target docker.service mediamtx.service
+                Requires=docker.service
 
                 [Service]
                 Type=simple
-                User=ubuntu
-                WorkingDirectory=/home/ubuntu/safevision-cv
+                User=root
                 EnvironmentFile=/etc/safevision/cv.env
-                ExecStart=/home/ubuntu/venv/bin/python main.py
+                ExecStartPre=-/usr/bin/docker stop safevision-cv
+                ExecStartPre=-/usr/bin/docker rm safevision-cv
+                ExecStart=/usr/bin/docker run --rm --name safevision-cv --network host --env-file /etc/safevision/cv.env ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EcrCvRepoName}:latest
                 Restart=always
                 RestartSec=5
 
