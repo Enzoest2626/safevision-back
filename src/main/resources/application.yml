@@ -20,4 +20,4 @@ springdoc:
 logging:
   level:
     com.safevision: DEBUG
-    org.springframework.r2dbc: DEBUG
+    org.springframework.r2dbc: INFO

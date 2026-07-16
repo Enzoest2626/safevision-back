@@ -12,6 +12,8 @@ import com.safevision.back.repository.NotificationRepository;
 import com.safevision.back.repository.NotificationStatusRepository;
 import com.safevision.back.repository.SiteContactRepository;
 import com.safevision.back.repository.ZoneRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -26,6 +28,8 @@ import java.util.List;
  */
 @Service
 public class IncidentNotificationService {
+
+    private static final Logger log = LoggerFactory.getLogger(IncidentNotificationService.class);
 
     private static final String CHANNEL_TELEGRAM = "TELEGRAM";
     private static final String STATUS_SENT = "SENT";
@@ -61,9 +65,12 @@ public class IncidentNotificationService {
                     List<String> chatIds = resolved.getT1();
                     String zoneName = resolved.getT2();
                     if (chatIds.isEmpty()) {
+                        log.warn("Sin contactos Telegram configurados | incident_id={} site_id={}",
+                                incident.id(), site.id());
                         return recordNotification(incident.id(), STATUS_FAILED,
                                 "Sin chat de Telegram configurado para la obra");
                     }
+                    log.info("Contactos Telegram resueltos | incident_id={} chats={}", incident.id(), chatIds.size());
                     return Flux.fromIterable(chatIds)
                             .flatMap(chatId -> sendAndRecord(chatId, incident, camera, site, zoneName, frameB64))
                             .then();
@@ -94,8 +101,14 @@ public class IncidentNotificationService {
     private Mono<Void> sendAndRecord(String chatId, Incident incident, Camera camera, Site site,
                                       String zoneName, String frameB64) {
         return telegramService.sendIncidentAlert(chatId, incident, camera, site, zoneName, frameB64)
+                .doOnSuccess(v -> log.info("Notificación Telegram enviada | incident_id={} chat_id={}",
+                        incident.id(), chatId))
                 .then(recordNotification(incident.id(), STATUS_SENT, null))
-                .onErrorResume(ex -> recordNotification(incident.id(), STATUS_FAILED, ex.getMessage()));
+                .onErrorResume(ex -> {
+                    log.error("Fallo notificación Telegram | incident_id={} chat_id={} error={}",
+                            incident.id(), chatId, ex.getMessage());
+                    return recordNotification(incident.id(), STATUS_FAILED, ex.getMessage());
+                });
     }
 
     private Mono<Void> recordNotification(Long incidentId, String statusCode, String errorMsg) {

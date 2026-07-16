@@ -1,5 +1,7 @@
 package com.safevision.back.config;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -18,6 +20,8 @@ import org.springframework.web.server.WebFilterChain;
 @Configuration
 @EnableWebFluxSecurity
 public class SecurityConfig {
+
+    private static final Logger log = LoggerFactory.getLogger(SecurityConfig.class);
 
     @Value("${app.security.alert-service-token}")
     private String alertServiceToken;
@@ -50,6 +54,8 @@ public class SecurityConfig {
             if (isIncidentEndpoint(exchange)) {
                 String auth = exchange.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
                 if (!("Bearer " + alertServiceToken).equals(auth)) {
+                    log.warn("Incidente rechazado | Bearer token inválido o ausente | remote={}",
+                            exchange.getRequest().getRemoteAddress());
                     exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
                     return exchange.getResponse().setComplete();
                 }
