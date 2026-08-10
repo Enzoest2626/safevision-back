@@ -17,6 +17,7 @@ application-prd.yml
 .env
 *.env
 *.env.local
+*.pem
 
 # OS
 .DS_Store

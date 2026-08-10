@@ -73,6 +73,7 @@ Claude **NUNCA** ejecuta automáticamente:
 | Maven                | Build tool                                               |
 | JaCoCo               | Cobertura de tests (`mvn test` genera `target/site/jacoco/`) |
 | Checkstyle / SpotBugs | Análisis estático (`failOnViolation=false`, no bloquean el build) |
+| Spotless              | Formateo automático (`spotless-maven-plugin`) — orden de imports, indentación, fin de línea; reglas livianas, sin preset Google |
 | Testcontainers       | Dependencia agregada — aún sin tests de integración que la usen |
 
 > **Nota:** este archivo documentaba originalmente una arquitectura hexagonal
@@ -107,8 +108,9 @@ src/main/java/com/safevision/back/
 ├── service/              ← Lógica de negocio (Reactor puro)
 │   ├── SiteService, CameraService, WorkerService, UserService
 │   ├── ZoneService, SiteContactService, EppParameterService
-│   ├── TelegramNotificationService   ← llamada HTTP al Bot API
-│   └── IncidentService               ← orquesta: persiste + resuelve contactos + notifica
+│   ├── TelegramNotificationService   ← llamada HTTP al Bot API (WebClient inyectable para tests)
+│   ├── IncidentNotificationService   ← resuelve contactos de la obra + envía Telegram + registra en `notifications`
+│   └── IncidentService               ← orquesta: persiste incidente + evidencia, delega notificación a IncidentNotificationService
 └── config/
     ├── OpenApiConfig        ← SpringDoc / Swagger
     ├── SecurityConfig       ← WebFilter que exige Bearer en POST /api/v1/incidents
@@ -434,7 +436,7 @@ Usar perfiles: `application-dev.yml`, `application-prd.yml`.
 | Componente   | Servicio AWS          | Detalle                                 |
 |--------------|-----------------------|-----------------------------------------|
 | Base de datos | AWS RDS              | PostgreSQL 16, Multi-AZ en PRD         |
-| Aplicación   | AWS EC2 / ECS Fargate | Spring Boot JAR / contenedor Docker   |
+| Aplicación   | AWS EC2 (Docker)      | Imagen Docker del backend publicada en ECR, pull automático vía UserData (ya no JAR+Corretto) |
 | Secretos     | AWS Secrets Manager   | Tokens, credenciales de BD            |
 | CI/CD        | GitHub Actions        | Build → Test → Deploy                  |
 
@@ -475,10 +477,10 @@ feat(setup): inicializa proyecto con dependencias y configuración base
 
 - Framework: JUnit 5 + Mockito + StepVerifier (reactivos).
 - Cobertura mínima: **70%** en `src/main/` — verificado con JaCoCo (`mvn test`, reporte en `target/site/jacoco/`).
-- **Estado verificado (2026-07-09):** 105 tests, 0 fallos, 0 errores — cobertura de instrucciones 88.4%.
+- **Estado verificado (2026-07-19):** 122 tests, 0 fallos, 0 errores, 1 omitido — cobertura de instrucciones 94.6%.
 - Tests actuales son unitarios (controller con `WebTestClient` + Mockito, service con StepVerifier/Mockito).
 - `Testcontainers` está en `pom.xml` pero **aún no hay tests de integración que lo usen** — pendiente antes de cerrar esa parte del checklist.
-- Mocks para Telegram en tests unitarios (Hikvision aún no tiene cliente que mockear).
+- Mocks para Telegram en tests unitarios (`TelegramNotificationServiceTest`, `TelegramNotificationPerformanceTest`) — `TelegramNotificationService` recibe `WebClient.Builder` inyectado en vez de construir su propio `WebClient`, para poder mockear el `ExchangeFunction` sin llamadas HTTP reales (Hikvision aún no tiene cliente que mockear).
 
 ---
 
@@ -511,10 +513,11 @@ feat(setup): inicializa proyecto con dependencias y configuración base
 - [x] Endpoint GET/PUT /api/v1/parameters/{siteId} (HU04) — por obra, con fallback al catálogo global
 - [ ] Reportes y estadísticas implementados (HU12)
 - [x] Servicio Telegram Bot (`TelegramNotificationService`) — notifica a los contactos de la obra
+- [x] Notificación de incidentes extraída a `IncidentNotificationService` — mantiene `IncidentService` bajo el límite de 150 líneas
 - [ ] Cliente Hikvision ISAPI (HU09) — solo existe `HikvisionProperties` (config), sin llamada HTTP real
 - [x] Swagger/OpenAPI configurado (`OpenApiConfig`)
 - [x] Seguridad Bearer token — solo protege `POST /api/v1/incidents`; el resto de endpoints está abierto (sin auth de usuario/JWT todavía)
-- [x] Tests unitarios — 105 tests, 0 fallos, cobertura de instrucciones 88.4% (JaCoCo, verificado 2026-07-09)
+- [x] Tests unitarios — 122 tests, 0 fallos, 1 omitido, cobertura de instrucciones 94.6% (JaCoCo, verificado 2026-07-19)
 - [ ] Tests de integración Testcontainers — dependencia agregada, sin tests que la usen aún
-- [ ] Configuración AWS RDS / deploy
-- [x] Checkstyle + SpotBugs integrados al build (no bloquean, `failOnViolation=false`)
+- [x] Infraestructura como código (CloudFormation) — RDS + 2 EC2 (backend, CV), bootstrap 100% automático vía UserData, pull de imágenes Docker desde ECR (`infra/`); pensada para crearse/borrarse por sesión de demo
+- [x] Checkstyle + SpotBugs + Spotless integrados al build (no bloquean, `failOnViolation=false`)

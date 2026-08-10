@@ -46,7 +46,7 @@ class IncidentControllerTest {
     @Test
     @DisplayName("POST /api/v1/incidents con payload válido retorna 201")
     void register_retorna201() {
-        when(service.register(any(IncidentRequest.class))).thenReturn(Mono.just(sampleResponse));
+        when(service.register(any(IncidentRequest.class), any())).thenReturn(Mono.just(sampleResponse));
 
         IncidentRequest request = new IncidentRequest(3, List.of("helmet", "vest"),
                 LocalDateTime.of(2026, 6, 24, 13, 30), "CAM-01", "Main-Site", "ZmFrZS1mcmFtZQ==");
@@ -62,7 +62,7 @@ class IncidentControllerTest {
     @Test
     @DisplayName("POST /api/v1/incidents con worker desconocido retorna 400")
     void register_workerDesconocido_retorna400() {
-        when(service.register(any(IncidentRequest.class))).thenReturn(Mono.error(
+        when(service.register(any(IncidentRequest.class), any())).thenReturn(Mono.error(
                 new ResponseStatusException(HttpStatus.BAD_REQUEST, "Worker desconocido: 3")));
 
         IncidentRequest request = new IncidentRequest(3, List.of("helmet"),
@@ -91,7 +91,7 @@ class IncidentControllerTest {
 
         // La validación @NotEmpty corta el flujo antes del controller: el servicio
         // (y por lo tanto la notificación Telegram que orquesta) nunca se invoca.
-        verify(service, never()).register(any());
+        verify(service, never()).register(any(), any());
 
         System.out.println("\n[CP31] Evaluación conforme (missing_epp vacío) — sin incumplimiento:");
         System.out.println("       Respuesta HTTP     = 400 (validación @NotEmpty)");

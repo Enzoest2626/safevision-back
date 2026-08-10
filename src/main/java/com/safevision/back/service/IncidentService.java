@@ -52,25 +52,25 @@ public class IncidentService {
         this.notificationService = notificationService;
     }
 
-    public Mono<IncidentResponse> register(IncidentRequest request) {
-        log.info("Evento recibido desde CV | worker_code={} camera_code={} site={} missing_epp={}",
-                request.workerCode(), request.cameraCode(), request.siteName(), request.missingEpp());
+    public Mono<IncidentResponse> register(IncidentRequest request, String traceId) {
+        log.info("Evento recibido desde CV | trace_id={} worker_code={} camera_code={} site={} missing_epp={}",
+                traceId, request.workerCode(), request.cameraCode(), request.siteName(), request.missingEpp());
 
         Mono<Worker> workerMono = workerRepo.findByCode(request.workerCode())
                 .switchIfEmpty(Mono.defer(() -> {
-                    log.warn("Incidente rechazado | worker_code={} no existe", request.workerCode());
+                    log.warn("Incidente rechazado | trace_id={} worker_code={} no existe", traceId, request.workerCode());
                     return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST,
                             "Worker desconocido: " + request.workerCode()));
                 }));
         Mono<Camera> cameraMono = cameraRepo.findByCode(request.cameraCode())
                 .switchIfEmpty(Mono.defer(() -> {
-                    log.warn("Incidente rechazado | camera_code={} no existe", request.cameraCode());
+                    log.warn("Incidente rechazado | trace_id={} camera_code={} no existe", traceId, request.cameraCode());
                     return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST,
                             "Cámara desconocida: " + request.cameraCode()));
                 }));
         Mono<Site> siteMono = siteRepo.findByName(request.siteName())
                 .switchIfEmpty(Mono.defer(() -> {
-                    log.warn("Incidente rechazado | site={} no existe", request.siteName());
+                    log.warn("Incidente rechazado | trace_id={} site={} no existe", traceId, request.siteName());
                     return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST,
                             "Obra desconocida: " + request.siteName()));
                 }));
@@ -85,11 +85,11 @@ public class IncidentService {
                             request.missingEpp().toArray(new String[0]), request.timestamp(), now);
 
                     return incidentRepo.save(incident)
-                            .doOnNext(saved -> log.info("Incidente persistido | id={} worker_id={} site_id={} camera_id={}",
-                                    saved.id(), saved.workerId(), saved.siteId(), saved.cameraId()))
+                            .doOnNext(saved -> log.info("Incidente persistido | trace_id={} id={} worker_id={} site_id={} camera_id={}",
+                                    traceId, saved.id(), saved.workerId(), saved.siteId(), saved.cameraId()))
                             .flatMap(saved -> evidenceRepo.save(new Evidence(null, saved.id(), request.frameB64(), now))
                                     .thenReturn(saved))
-                            .flatMap(saved -> notificationService.notify(saved, camera, site, request.frameB64())
+                            .flatMap(saved -> notificationService.notify(saved, camera, site, request.frameB64(), traceId)
                                     .thenReturn(saved));
                 })
                 .map(IncidentResponse::from);

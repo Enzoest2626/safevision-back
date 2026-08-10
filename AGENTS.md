@@ -54,7 +54,7 @@ Autores: Enzo Esteban Quispe / Yvette Flores Castillo
 | Telegram Bot API  | Notificaciones push a contactos de la obra    |
 | Hikvision ISAPI   | Config lista (`HikvisionProperties`), cliente HTTP pendiente (HU09) |
 | Maven             | Build tool                                     |
-| JaCoCo / Checkstyle / SpotBugs | Cobertura + análisis estático (no bloquean el build) |
+| JaCoCo / Checkstyle / SpotBugs / Spotless | Cobertura, análisis estático y formateo automático (no bloquean el build) |
 
 ---
 
@@ -198,7 +198,7 @@ SERVER_PORT=8080
 - Java 21: records, sealed classes, pattern matching.
 - Nombres en inglés (código y BD), comentarios en español.
 - Reactive first — cero `.block()`.
-- Cobertura tests >= 70% — verificado 2026-07-09: 105 tests, 0 fallos, 88.4% instrucciones (JaCoCo).
+- Cobertura tests >= 70% — verificado 2026-07-19: 122 tests, 0 fallos, 1 omitido, 94.6% instrucciones (JaCoCo).
 - Testcontainers en `pom.xml` pero sin tests de integración que lo usen todavía.
 - Endpoints documentados con `@Operation` / `@ApiResponse`.
 
@@ -214,9 +214,11 @@ feat(sites): implementa CRUD de obras
 
 Implementado: CRUD de Sites/Zones/Cameras/Workers/Users/SiteContacts,
 POST+GET /api/v1/incidents (HU10), GET/PUT /api/v1/parameters/{siteId} (HU04),
-notificación Telegram vía `TelegramNotificationService`, Swagger, Bearer token
-en el endpoint de incidentes, 105 tests unitarios.
+notificación Telegram vía `TelegramNotificationService` (delegada desde
+`IncidentService` a `IncidentNotificationService`), Swagger, Bearer token
+en el endpoint de incidentes, 122 tests unitarios, infraestructura AWS como
+código (CloudFormation, RDS + EC2 con imágenes Docker vía ECR).
 
 Pendiente: reportes/estadísticas (HU12), endpoint de notificaciones, cliente
 Hikvision ISAPI (HU09), tests de integración con Testcontainers, auth de
-usuario/JWT para el resto de endpoints, deploy AWS RDS.
+usuario/JWT para el resto de endpoints.

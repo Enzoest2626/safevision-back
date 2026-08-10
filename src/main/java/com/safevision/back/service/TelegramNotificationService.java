@@ -4,6 +4,7 @@ import com.safevision.back.config.TelegramProperties;
 import com.safevision.back.model.Camera;
 import com.safevision.back.model.Incident;
 import com.safevision.back.model.Site;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.client.MultipartBodyBuilder;
 import org.springframework.stereotype.Service;
@@ -34,6 +35,7 @@ public class TelegramNotificationService {
      * construir el WebClient internamente, para poder inyectar un ExchangeFunction
      * mockeado en tests unitarios sin llamadas HTTP reales.
      */
+    @Autowired
     public TelegramNotificationService(WebClient.Builder webClientBuilder, TelegramProperties properties) {
         this(webClientBuilder, properties, TELEGRAM_API_BASE_URL);
     }

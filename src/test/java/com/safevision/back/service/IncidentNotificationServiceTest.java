@@ -83,7 +83,7 @@ class IncidentNotificationServiceTest {
         when(telegramService.sendIncidentAlert(eq("111222333"), any(), any(), any(), anyString(), anyString()))
                 .thenReturn(Mono.empty());
 
-        StepVerifier.create(service.notify(incident, camera, site, "ZmFrZS1mcmFtZQ=="))
+        StepVerifier.create(service.notify(incident, camera, site, "ZmFrZS1mcmFtZQ==", "trace-test"))
                 .verifyComplete();
 
         verify(telegramService).sendIncidentAlert(eq("111222333"), any(), any(), any(), anyString(), anyString());
@@ -102,7 +102,7 @@ class IncidentNotificationServiceTest {
         when(telegramService.sendIncidentAlert(anyString(), any(), any(), any(), eq("Piso 2 - Construcción"), anyString()))
                 .thenReturn(Mono.empty());
 
-        StepVerifier.create(service.notify(incident, cameraConZona, site, "ZmFrZS1mcmFtZQ=="))
+        StepVerifier.create(service.notify(incident, cameraConZona, site, "ZmFrZS1mcmFtZQ==", "trace-test"))
                 .verifyComplete();
 
         verify(telegramService).sendIncidentAlert(
@@ -116,7 +116,7 @@ class IncidentNotificationServiceTest {
         when(telegramService.sendIncidentAlert(eq("GLOBAL-CHAT"), any(), any(), any(), anyString(), anyString()))
                 .thenReturn(Mono.empty());
 
-        StepVerifier.create(service.notify(incident, camera, site, "ZmFrZS1mcmFtZQ=="))
+        StepVerifier.create(service.notify(incident, camera, site, "ZmFrZS1mcmFtZQ==", "trace-test"))
                 .verifyComplete();
 
         verify(telegramService).sendIncidentAlert(eq("GLOBAL-CHAT"), any(), any(), any(), anyString(), anyString());
@@ -130,7 +130,7 @@ class IncidentNotificationServiceTest {
                 siteContactRepo, zoneRepo, telegramService, sinFallback);
         when(siteContactRepo.findBySiteIdAndTelegramChatIdIsNotNullAndActiveTrue(1L)).thenReturn(Flux.empty());
 
-        StepVerifier.create(service.notify(incident, camera, site, "ZmFrZS1mcmFtZQ=="))
+        StepVerifier.create(service.notify(incident, camera, site, "ZmFrZS1mcmFtZQ==", "trace-test"))
                 .verifyComplete();
 
         verify(telegramService, never()).sendIncidentAlert(anyString(), any(), any(), any(), anyString(), anyString());
@@ -147,7 +147,7 @@ class IncidentNotificationServiceTest {
         when(telegramService.sendIncidentAlert(eq("GLOBAL-CHAT"), any(), any(), any(), anyString(), anyString()))
                 .thenReturn(Mono.error(new IllegalStateException("Telegram respondió 401")));
 
-        StepVerifier.create(service.notify(incident, camera, site, "ZmFrZS1mcmFtZQ=="))
+        StepVerifier.create(service.notify(incident, camera, site, "ZmFrZS1mcmFtZQ==", "trace-test"))
                 .verifyComplete();
 
         verify(notificationRepo).save(argThat(n ->
@@ -163,7 +163,7 @@ class IncidentNotificationServiceTest {
         when(telegramService.sendIncidentAlert(eq("GLOBAL-CHAT"), any(), any(), any(), anyString(), anyString()))
                 .thenReturn(Mono.error(new IllegalStateException("Telegram respondió 429: Too Many Requests")));
 
-        StepVerifier.create(service.notify(incident, camera, site, "ZmFrZS1mcmFtZQ=="))
+        StepVerifier.create(service.notify(incident, camera, site, "ZmFrZS1mcmFtZQ==", "trace-test"))
                 .verifyComplete();
 
         ArgumentCaptor<Notification> notificationCaptor = ArgumentCaptor.forClass(Notification.class);

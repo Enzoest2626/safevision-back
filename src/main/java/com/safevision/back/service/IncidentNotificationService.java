@@ -59,20 +59,21 @@ public class IncidentNotificationService {
         this.telegramProperties = telegramProperties;
     }
 
-    public Mono<Void> notify(Incident incident, Camera camera, Site site, String frameB64) {
+    public Mono<Void> notify(Incident incident, Camera camera, Site site, String frameB64, String traceId) {
         return Mono.zip(resolveChatIds(site.id()), resolveZoneName(camera))
                 .flatMap(resolved -> {
                     List<String> chatIds = resolved.getT1();
                     String zoneName = resolved.getT2();
                     if (chatIds.isEmpty()) {
-                        log.warn("Sin contactos Telegram configurados | incident_id={} site_id={}",
-                                incident.id(), site.id());
+                        log.warn("Sin contactos Telegram configurados | trace_id={} incident_id={} site_id={}",
+                                traceId, incident.id(), site.id());
                         return recordNotification(incident.id(), STATUS_FAILED,
                                 "Sin chat de Telegram configurado para la obra");
                     }
-                    log.info("Contactos Telegram resueltos | incident_id={} chats={}", incident.id(), chatIds.size());
+                    log.info("Contactos Telegram resueltos | trace_id={} incident_id={} chats={}",
+                            traceId, incident.id(), chatIds.size());
                     return Flux.fromIterable(chatIds)
-                            .flatMap(chatId -> sendAndRecord(chatId, incident, camera, site, zoneName, frameB64))
+                            .flatMap(chatId -> sendAndRecord(chatId, incident, camera, site, zoneName, frameB64, traceId))
                             .then();
                 });
     }
@@ -99,14 +100,14 @@ public class IncidentNotificationService {
     }
 
     private Mono<Void> sendAndRecord(String chatId, Incident incident, Camera camera, Site site,
-                                      String zoneName, String frameB64) {
+                                      String zoneName, String frameB64, String traceId) {
         return telegramService.sendIncidentAlert(chatId, incident, camera, site, zoneName, frameB64)
-                .doOnSuccess(v -> log.info("Notificación Telegram enviada | incident_id={} chat_id={}",
-                        incident.id(), chatId))
+                .doOnSuccess(v -> log.info("Notificación Telegram enviada | trace_id={} incident_id={} chat_id={}",
+                        traceId, incident.id(), chatId))
                 .then(recordNotification(incident.id(), STATUS_SENT, null))
                 .onErrorResume(ex -> {
-                    log.error("Fallo notificación Telegram | incident_id={} chat_id={} error={}",
-                            incident.id(), chatId, ex.getMessage());
+                    log.error("Fallo notificación Telegram | trace_id={} incident_id={} chat_id={} error={}",
+                            traceId, incident.id(), chatId, ex.getMessage());
                     return recordNotification(incident.id(), STATUS_FAILED, ex.getMessage());
                 });
     }

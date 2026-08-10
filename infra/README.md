@@ -145,7 +145,7 @@ Debe responder `201` y llegar una foto a Telegram.
 
 ```bash
 ssh -i safevision-demo.pem ubuntu@<IP_CV>
-./simulate_camera.sh obra1   # o obra2 / obra3
+./simulate_camera.sh 1   # o 2 / 3 -- mismo path/camara (obra1), solo cambia el video
 ```
 
 Publica el video una vez en tiempo real; `safevision-cv` (que ya estaba

@@ -75,13 +75,13 @@ class IncidentServiceTest {
                             i.missingEpp(), i.occurredAt(), i.createdAt()));
                 });
         lenient().when(evidenceRepo.save(any(Evidence.class))).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
-        lenient().when(notificationService.notify(any(), any(), any(), anyString())).thenReturn(Mono.empty());
+        lenient().when(notificationService.notify(any(), any(), any(), anyString(), anyString())).thenReturn(Mono.empty());
     }
 
     @Test
     @DisplayName("Incidente válido → persiste incidente + evidencia y delega la notificación")
     void registraIncidente_valido_persisteYDelegaNotificacion() {
-        StepVerifier.create(service.register(requestFor("Main-Site")))
+        StepVerifier.create(service.register(requestFor("Main-Site"), "trace-test"))
                 .assertNext(response -> {
                     assertThat(response.id()).isEqualTo(100L);
                     assertThat(response.workerId()).isEqualTo(10L);
@@ -92,7 +92,7 @@ class IncidentServiceTest {
                 .verifyComplete();
 
         verify(evidenceRepo).save(any(Evidence.class));
-        verify(notificationService).notify(any(Incident.class), eq(camera), eq(site), anyString());
+        verify(notificationService).notify(any(Incident.class), eq(camera), eq(site), anyString(), anyString());
     }
 
     @Test
@@ -100,12 +100,12 @@ class IncidentServiceTest {
     void registraIncidente_notificacionRecibeDatosCorrectos() {
         LocalDateTime timestampEsperado = LocalDateTime.of(2026, 6, 24, 13, 30);
 
-        StepVerifier.create(service.register(requestFor("Main-Site")))
+        StepVerifier.create(service.register(requestFor("Main-Site"), "trace-test"))
                 .assertNext(response -> assertThat(response.id()).isEqualTo(100L))
                 .verifyComplete();
 
         ArgumentCaptor<Incident> incidentCaptor = ArgumentCaptor.forClass(Incident.class);
-        verify(notificationService).notify(incidentCaptor.capture(), eq(camera), eq(site), anyString());
+        verify(notificationService).notify(incidentCaptor.capture(), eq(camera), eq(site), anyString(), anyString());
         Incident incidentEnviado = incidentCaptor.getValue();
 
         assertThat(incidentEnviado.workerId()).isEqualTo(10L);
@@ -118,13 +118,13 @@ class IncidentServiceTest {
     void registraIncidente_workerDesconocido_lanzaBadRequest() {
         when(workerRepo.findByCode(3)).thenReturn(Mono.empty());
 
-        StepVerifier.create(service.register(requestFor("Main-Site")))
+        StepVerifier.create(service.register(requestFor("Main-Site"), "trace-test"))
                 .expectErrorMatches(ex -> ex instanceof ResponseStatusException rse
                         && rse.getStatusCode() == HttpStatus.BAD_REQUEST)
                 .verify();
 
         verify(incidentRepo, never()).save(any());
-        verify(notificationService, never()).notify(any(), any(), any(), anyString());
+        verify(notificationService, never()).notify(any(), any(), any(), anyString(), anyString());
     }
 
     @Test
@@ -132,7 +132,7 @@ class IncidentServiceTest {
     void registraIncidente_camaraDesconocida_lanzaBadRequest() {
         when(cameraRepo.findByCode("CAM-01")).thenReturn(Mono.empty());
 
-        StepVerifier.create(service.register(requestFor("Main-Site")))
+        StepVerifier.create(service.register(requestFor("Main-Site"), "trace-test"))
                 .expectErrorMatches(ex -> ex instanceof ResponseStatusException rse
                         && rse.getStatusCode() == HttpStatus.BAD_REQUEST)
                 .verify();
@@ -145,7 +145,7 @@ class IncidentServiceTest {
     void registraIncidente_obraDesconocida_lanzaBadRequest() {
         when(siteRepo.findByName("Obra-Fantasma")).thenReturn(Mono.empty());
 
-        StepVerifier.create(service.register(requestFor("Obra-Fantasma")))
+        StepVerifier.create(service.register(requestFor("Obra-Fantasma"), "trace-test"))
                 .expectErrorMatches(ex -> ex instanceof ResponseStatusException rse
                         && rse.getStatusCode() == HttpStatus.BAD_REQUEST)
                 .verify();

@@ -7,6 +7,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Parameter;
 import jakarta.validation.Valid;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
@@ -14,6 +15,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
@@ -22,6 +24,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.LocalDateTime;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1/incidents")
@@ -42,8 +45,13 @@ public class IncidentController {
                security = @SecurityRequirement(name = "bearerAuth"))
     @ApiResponse(responseCode = "201", description = "Incidente registrado")
     @ApiResponse(responseCode = "400", description = "Worker, cámara u obra desconocidos")
-    public Mono<IncidentResponse> register(@Valid @RequestBody IncidentRequest request) {
-        return incidentService.register(request);
+    public Mono<IncidentResponse> register(
+            @Valid @RequestBody IncidentRequest request,
+            @Parameter(description = "Id de correlación generado por el CV para seguir el evento en los logs "
+                    + "(no se persiste ni se envía a Telegram); si no llega, se autogenera uno.")
+            @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
+        String effectiveTraceId = (traceId != null && !traceId.isBlank()) ? traceId : UUID.randomUUID().toString();
+        return incidentService.register(request, effectiveTraceId);
     }
 
     @GetMapping

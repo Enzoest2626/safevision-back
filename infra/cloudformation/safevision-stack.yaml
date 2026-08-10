@@ -401,11 +401,13 @@ Resources:
                 cat > /home/ubuntu/simulate_camera.sh <<'SCRIPTEOF'
                 #!/bin/bash
                 set -euo pipefail
-                PATH_NAME="${1:?Uso: simulate_camera.sh <obra1|obra2|obra3>}"
-                NUM="${PATH_NAME//obra/}"
+                # El CV de esta instancia esta fijo a un solo path (VIDEO_SOURCE=.../obra1
+                # en /etc/safevision/cv.env) -- los 3 videos de prueba comparten esa misma
+                # conexion/camara, solo cambia el contenido publicado.
+                NUM="${1:?Uso: simulate_camera.sh <1|2|3>}"
                 VIDEO="$HOME/videos/OBRA_REAL_${NUM}.mp4"
-                echo "Publicando $VIDEO en rtsp://localhost:8554/$PATH_NAME ..."
-                ffmpeg -re -i "$VIDEO" -c copy -f rtsp "rtsp://localhost:8554/$PATH_NAME"
+                echo "Publicando $VIDEO en rtsp://localhost:8554/obra1 ..."
+                ffmpeg -re -i "$VIDEO" -c copy -f rtsp "rtsp://localhost:8554/obra1"
                 SCRIPTEOF
               - !Sub |
                 chmod +x /home/ubuntu/simulate_camera.sh
@@ -526,4 +528,4 @@ Outputs:
 
   SimulateCameraCommand:
     Description: Comando para disparar la demo una vez conectado por SSH a la EC2 CV.
-    Value: ./simulate_camera.sh obra1
+    Value: ./simulate_camera.sh 1
