@@ -1,6 +1,8 @@
 app:
   security:
     alert-service-token: test-token-safevision
+    jwt-secret: test-jwt-secret-safevision-minimum-32-bytes-long
+    jwt-expiration-minutes: 480
 
 spring:
   r2dbc:

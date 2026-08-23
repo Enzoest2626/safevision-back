@@ -8,14 +8,20 @@ telegram:
   bot-token: ${TELEGRAM_BOT_TOKEN:}
   chat-id: ${TELEGRAM_CHAT_ID:}
 
-hikvision:
-  base-url: ${HIKVISION_BASE_URL:}
-  username: ${HIKVISION_USERNAME:}
-  password: ${HIKVISION_PASSWORD:}
+mqtt:
+  broker-host: ${MQTT_BROKER_HOST:}
+  broker-port: ${MQTT_BROKER_PORT:1883}
+  username: ${MQTT_USERNAME:}
+  password: ${MQTT_PASSWORD:}
+  client-id: ${MQTT_CLIENT_ID:}
 
-cv:
-  reload-url: ${CV_RELOAD_URL:}
+s3:
+  bucket: ${S3_BUCKET:}
+  region: ${AWS_REGION:us-east-1}
+  presign-ttl-minutes: ${S3_PRESIGN_TTL_MINUTES:15}
 
 app:
   security:
     alert-service-token: ${ALERT_SERVICE_TOKEN:dev-token}
+    jwt-secret: ${JWT_SECRET:change-me-safevision-dev-secret-minimum-32-bytes-long}
+    jwt-expiration-minutes: ${JWT_EXPIRATION_MINUTES:480}

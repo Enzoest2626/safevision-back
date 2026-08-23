@@ -1,0 +1,647 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  SafeVision — demo en vivo, version MQTT+S3. Crea RDS + 2 EC2 (backend, CV)
+  con bootstrap 100% automatico via UserData: instala Docker, hace pull de
+  las imagenes ya publicadas en ECR y deja los servicios corriendo solos,
+  sin SSH manual. A diferencia de safevision-stack.yaml (HTTP legacy, sin
+  uso — se deja intacto por si hace falta volver atras), este stack agrega
+  un broker MQTT (Mosquitto en la EC2 del backend) para incidentes/clips/
+  reglas, y un bucket S3 nuevo para la evidencia (foto+clip) que sube el CV.
+  Los repositorios ECR, el bucket de assets (SQL+videos) y este bucket de
+  evidencia son recursos persistentes fuera del ciclo de vida del stack —
+  solo compute (RDS + EC2) es efimero, pensado para crearse y borrarse por
+  sesion de demo (aws cloudformation delete-stack).
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: >
+      VPC donde crear todo (usar la VPC default de la cuenta/region:
+      aws ec2 describe-vpcs --filters Name=is-default,Values=true
+      --query 'Vpcs[0].VpcId' --output text).
+
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: >
+      Subnet (dentro de VpcId) donde lanzar las 2 EC2. Cualquier subnet
+      publica de la VPC default sirve (aws ec2 describe-subnets
+      --filters Name=vpc-id,Values=<VpcId> --query 'Subnets[0].SubnetId'
+      --output text).
+
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Key pair EC2 ya existente, usada para SSH en ambas instancias.
+
+  MyIpCidr:
+    Type: String
+    Description: Tu IP publica en formato CIDR (ej. 190.1.2.3/32) para SSH/Swagger/MQTT debug.
+    AllowedPattern: '^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$'
+
+  AssetsBucketName:
+    Type: String
+    Description: >
+      Bucket S3 (ya existente, poblado con infra/deploy.sh upload) con
+      sql/init-schema.sql, sql/seed-data.sql y videos/. El JAR y el codigo
+      del modulo CV ya no viven aca — van dentro de las imagenes Docker en
+      ECR (ver EcrBackendRepoName / EcrCvRepoName).
+
+  EvidenceBucketName:
+    Type: String
+    Description: >
+      Nombre del bucket S3 de evidencia (foto+clip subidos por el CV) — lo
+      crea este stack como recurso nuevo. Debe ser un nombre unico global de
+      S3 que no exista todavia.
+
+  EcrBackendRepoName:
+    Type: String
+    Default: safevision-backend
+    Description: >
+      Nombre del repositorio ECR (ya existente, poblado con
+      infra/deploy.sh build) con la imagen del backend.
+
+  EcrCvRepoName:
+    Type: String
+    Default: safevision-cv
+    Description: >
+      Nombre del repositorio ECR (ya existente, poblado con
+      infra/deploy.sh build) con la imagen del modulo CV.
+
+  DbMasterPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    Description: >
+      Password del usuario safevision en RDS. Evitar comillas, backticks y
+      signos $ — se usa dentro de un script bash en UserData.
+
+  AlertServiceToken:
+    Type: String
+    NoEcho: true
+    Description: >
+      Bearer token del endpoint HTTP legacy (POST /api/v1/incidents) — sin
+      uso activo del CV en este stack, pero el backend lo sigue exigiendo
+      si alguien pega manualmente. Se mantiene por consistencia.
+
+  TelegramBotToken:
+    Type: String
+    NoEcho: true
+
+  TelegramChatId:
+    Type: String
+    NoEcho: true
+
+  LatestUbuntuAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id
+    Description: Resuelto automaticamente al AMI de Ubuntu 24.04 LTS mas reciente en la region.
+
+Resources:
+
+  # ────────────────────────────────────────────────────────────
+  # Security Groups
+  # ────────────────────────────────────────────────────────────
+
+  SgCV:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: SafeVision - CV EC2
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref MyIpCidr
+        - IpProtocol: tcp
+          FromPort: 8554
+          ToPort: 8554
+          CidrIp: !Ref MyIpCidr
+      Tags:
+        - Key: Name
+          Value: sg-cv
+
+  SgBackend:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: SafeVision - Backend EC2 (incluye broker MQTT)
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref MyIpCidr
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: !Ref MyIpCidr
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          SourceSecurityGroupId: !GetAtt SgCV.GroupId
+        - IpProtocol: tcp
+          FromPort: 1883
+          ToPort: 1883
+          CidrIp: !Ref MyIpCidr
+          Description: MQTT — debug local (mosquitto corre en esta misma instancia)
+        - IpProtocol: tcp
+          FromPort: 1883
+          ToPort: 1883
+          SourceSecurityGroupId: !GetAtt SgCV.GroupId
+          Description: MQTT — el CV publica incidentes/clips y se suscribe a reglas
+      Tags:
+        - Key: Name
+          Value: sg-backend
+
+  SgRds:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: SafeVision - RDS
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !GetAtt SgBackend.GroupId
+      Tags:
+        - Key: Name
+          Value: sg-rds
+
+  # ────────────────────────────────────────────────────────────
+  # S3 — evidencia (foto+clip subidos por el CV)
+  # ────────────────────────────────────────────────────────────
+
+  EvidenceBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Ref EvidenceBucketName
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireEvidenceAfter60Days
+            Status: Enabled
+            ExpirationInDays: 60
+      Tags:
+        - Key: Name
+          Value: safevision-evidence
+
+  # ────────────────────────────────────────────────────────────
+  # IAM — dos roles separados (least-privilege): el backend solo lee
+  # evidencia (para presignar), el CV solo escribe (PutObject acotado).
+  # ────────────────────────────────────────────────────────────
+
+  BackendRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ReadAssetsBucket
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub arn:aws:s3:::${AssetsBucketName}
+                  - !Sub arn:aws:s3:::${AssetsBucketName}/*
+        - PolicyName: ReadEvidenceBucket
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub arn:aws:s3:::${EvidenceBucketName}/*
+        - PolicyName: PullEcrBackendImage
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                Resource: !Sub arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${EcrBackendRepoName}
+
+  BackendInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref BackendRole
+
+  CvRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ReadAssetsBucket
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub arn:aws:s3:::${AssetsBucketName}
+                  - !Sub arn:aws:s3:::${AssetsBucketName}/*
+        - PolicyName: WriteEvidenceBucket
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub arn:aws:s3:::${EvidenceBucketName}/incidents/*
+        - PolicyName: PullEcrCvImage
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                Resource: !Sub arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${EcrCvRepoName}
+
+  CvInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref CvRole
+
+  # ────────────────────────────────────────────────────────────
+  # RDS
+  # ────────────────────────────────────────────────────────────
+
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete
+    Properties:
+      DBInstanceIdentifier: safevision-db
+      DBInstanceClass: db.t4g.micro
+      Engine: postgres
+      EngineVersion: '16'
+      MasterUsername: safevision
+      MasterUserPassword: !Ref DbMasterPassword
+      AllocatedStorage: '20'
+      StorageType: gp3
+      DBName: safevision
+      VPCSecurityGroups:
+        - !GetAtt SgRds.GroupId
+      PubliclyAccessible: false
+      BackupRetentionPeriod: 0
+      DeletionProtection: false
+      MultiAZ: false
+
+  # ────────────────────────────────────────────────────────────
+  # EC2 Backend (incluye broker MQTT — mosquitto en Docker, misma instancia)
+  # ────────────────────────────────────────────────────────────
+
+  BackendInstance:
+    Type: AWS::EC2::Instance
+    DependsOn: RDSInstance
+    Properties:
+      InstanceType: t3.medium
+      ImageId: !Ref LatestUbuntuAmiId
+      KeyName: !Ref KeyPairName
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds:
+        - !GetAtt SgBackend.GroupId
+      IamInstanceProfile: !Ref BackendInstanceProfile
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 20
+            VolumeType: gp3
+      Tags:
+        - Key: Name
+          Value: safevision-backend
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euo pipefail
+          exec > /var/log/safevision-userdata.log 2>&1
+          echo "=== SafeVision backend bootstrap (MQTT+S3): $(date) ==="
+
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq ca-certificates curl gnupg unzip postgresql-client
+
+          echo "--- Instalando Docker ---"
+          install -m 0755 -d /etc/apt/keyrings
+          curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+          chmod a+r /etc/apt/keyrings/docker.asc
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+            > /etc/apt/sources.list.d/docker.list
+          apt-get update -qq
+          apt-get install -y -qq docker-ce docker-ce-cli containerd.io
+          usermod -aG docker ubuntu
+
+          echo "--- Instalando AWS CLI v2 ---"
+          curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+          unzip -q /tmp/awscliv2.zip -d /tmp
+          /tmp/aws/install
+          rm -rf /tmp/awscliv2.zip /tmp/aws
+
+          echo "--- Login a ECR + pull de la imagen del backend ---"
+          aws ecr get-login-password --region ${AWS::Region} \
+            | docker login --username AWS --password-stdin ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com
+          docker pull ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EcrBackendRepoName}:latest
+          docker pull eclipse-mosquitto:2
+
+          mkdir -p /opt/safevision /etc/safevision
+          aws s3 cp s3://${AssetsBucketName}/sql/init-schema.sql /opt/safevision/init-schema.sql
+          aws s3 cp s3://${AssetsBucketName}/sql/seed-data.sql /opt/safevision/seed-data.sql
+
+          echo "Esperando a que RDS acepte conexiones..."
+          until pg_isready -h ${RDSInstance.Endpoint.Address} -p 5432 -U safevision >/dev/null 2>&1; do
+            sleep 5
+          done
+          echo "RDS disponible, cargando schema + seed..."
+
+          export PGPASSWORD='${DbMasterPassword}'
+          psql "host=${RDSInstance.Endpoint.Address} port=5432 dbname=safevision user=safevision sslmode=require" -v ON_ERROR_STOP=1 -f /opt/safevision/init-schema.sql
+          psql "host=${RDSInstance.Endpoint.Address} port=5432 dbname=safevision user=safevision sslmode=require" -v ON_ERROR_STOP=1 -f /opt/safevision/seed-data.sql
+          unset PGPASSWORD
+
+          echo "--- Configurando mosquitto (broker MQTT local, auth anonima acotada por Security Group) ---"
+          mkdir -p /etc/mosquitto
+          printf 'listener 1883 0.0.0.0\nallow_anonymous true\npersistence false\n' > /etc/mosquitto/mosquitto.conf
+
+          cat > /etc/systemd/system/mosquitto.service <<UNITEOF
+          [Unit]
+          Description=Mosquitto MQTT Broker (Docker)
+          After=network.target docker.service
+          Requires=docker.service
+
+          [Service]
+          Type=simple
+          User=root
+          ExecStartPre=-/usr/bin/docker stop mosquitto
+          ExecStartPre=-/usr/bin/docker rm mosquitto
+          ExecStart=/usr/bin/docker run --rm --name mosquitto -p 1883:1883 -v /etc/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro eclipse-mosquitto:2
+          Restart=always
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+          UNITEOF
+
+          cat > /etc/safevision/backend.env <<ENVEOF
+          SPRING_PROFILES_ACTIVE=prd
+          SPRING_R2DBC_URL=r2dbc:postgresql://${RDSInstance.Endpoint.Address}:5432/safevision?sslMode=REQUIRE
+          SPRING_R2DBC_USERNAME=safevision
+          SPRING_R2DBC_PASSWORD=${DbMasterPassword}
+          ALERT_SERVICE_TOKEN=${AlertServiceToken}
+          TELEGRAM_BOT_TOKEN=${TelegramBotToken}
+          TELEGRAM_CHAT_ID=${TelegramChatId}
+          MQTT_BROKER_HOST=localhost
+          MQTT_BROKER_PORT=1883
+          S3_BUCKET=${EvidenceBucketName}
+          AWS_REGION=${AWS::Region}
+          SERVER_PORT=8080
+          ENVEOF
+          chmod 600 /etc/safevision/backend.env
+
+          cat > /etc/systemd/system/safevision-back.service <<UNITEOF
+          [Unit]
+          Description=SafeVision Backend (Docker)
+          After=network.target docker.service mosquitto.service
+          Requires=docker.service
+
+          [Service]
+          Type=simple
+          User=root
+          EnvironmentFile=/etc/safevision/backend.env
+          ExecStartPre=-/usr/bin/docker stop safevision-back
+          ExecStartPre=-/usr/bin/docker rm safevision-back
+          ExecStart=/usr/bin/docker run --rm --name safevision-back --network host --env-file /etc/safevision/backend.env ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EcrBackendRepoName}:latest
+          Restart=always
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+          UNITEOF
+
+          systemctl daemon-reload
+          systemctl enable --now mosquitto
+          systemctl enable --now safevision-back
+          echo "=== SafeVision backend bootstrap terminado: $(date) ==="
+
+  # ────────────────────────────────────────────────────────────
+  # EC2 CV
+  # ────────────────────────────────────────────────────────────
+
+  CVInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: c6i.xlarge
+      ImageId: !Ref LatestUbuntuAmiId
+      KeyName: !Ref KeyPairName
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds:
+        - !GetAtt SgCV.GroupId
+      IamInstanceProfile: !Ref CvInstanceProfile
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 40
+            VolumeType: gp3
+      Tags:
+        - Key: Name
+          Value: safevision-cv
+      UserData:
+        Fn::Base64:
+          Fn::Join:
+            - ''
+            - - !Sub |
+                #!/bin/bash
+                set -euo pipefail
+                exec > /var/log/safevision-userdata.log 2>&1
+                echo "=== SafeVision CV bootstrap (MQTT+S3): $(date) ==="
+
+                export DEBIAN_FRONTEND=noninteractive
+                apt-get update -qq
+                apt-get install -y -qq ca-certificates curl gnupg ffmpeg unzip
+
+                echo "--- Instalando Docker ---"
+                install -m 0755 -d /etc/apt/keyrings
+                curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+                chmod a+r /etc/apt/keyrings/docker.asc
+                echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+                  > /etc/apt/sources.list.d/docker.list
+                apt-get update -qq
+                apt-get install -y -qq docker-ce docker-ce-cli containerd.io
+                usermod -aG docker ubuntu
+
+                echo "--- Instalando AWS CLI v2 ---"
+                curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+                unzip -q /tmp/awscliv2.zip -d /tmp
+                /tmp/aws/install
+                rm -rf /tmp/awscliv2.zip /tmp/aws
+
+                echo "--- Login a ECR + pull de las imagenes (CV + MediaMTX) ---"
+                aws ecr get-login-password --region ${AWS::Region} \
+                  | docker login --username AWS --password-stdin ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com
+                docker pull ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EcrCvRepoName}:latest
+                docker pull bluenviron/mediamtx:latest
+
+                mkdir -p /home/ubuntu/videos
+                aws s3 cp --recursive s3://${AssetsBucketName}/videos/ /home/ubuntu/videos/
+                chown -R ubuntu:ubuntu /home/ubuntu/videos
+
+              - |
+                cat > /home/ubuntu/simulate_camera.sh <<'SCRIPTEOF'
+                #!/bin/bash
+                set -euo pipefail
+                # El CV de esta instancia esta fijo a un solo path (VIDEO_SOURCE=.../obra1
+                # en /etc/safevision/cv.env) -- los 3 videos de prueba comparten esa misma
+                # conexion/camara, solo cambia el contenido publicado.
+                NUM="${1:?Uso: simulate_camera.sh <1|2|3>}"
+                VIDEO="$HOME/videos/OBRA_REAL_${NUM}.mp4"
+                echo "Publicando $VIDEO en rtsp://localhost:8554/obra1 ..."
+                ffmpeg -re -i "$VIDEO" -c copy -f rtsp "rtsp://localhost:8554/obra1"
+                SCRIPTEOF
+              - !Sub |
+                chmod +x /home/ubuntu/simulate_camera.sh
+                chown ubuntu:ubuntu /home/ubuntu/simulate_camera.sh
+
+                mkdir -p /etc/safevision
+                cat > /etc/safevision/cv.env <<ENVEOF
+                VIDEO_SOURCE=rtsp://localhost:8554/obra1
+                MQTT_BROKER_HOST=${BackendInstance.PrivateIp}
+                MQTT_BROKER_PORT=1883
+                SITE_ID=1
+                SITE_NAME=Obra-Principal
+                CAMERA_ID=CAM-01
+                COOLDOWN_SECONDS=60
+                MODEL_PATH=models/yolov11s/exp2/weights/best_int8_openvino_model
+                DISPLAY_WINDOW=false
+                CLIP_ENABLED=true
+                S3_BUCKET=${EvidenceBucketName}
+                AWS_REGION=${AWS::Region}
+                TZ=America/Lima
+                ENVEOF
+                chmod 600 /etc/safevision/cv.env
+
+                cat > /etc/systemd/system/mediamtx.service <<UNITEOF
+                [Unit]
+                Description=MediaMTX RTSP Server (Docker)
+                After=network.target docker.service
+                Requires=docker.service
+
+                [Service]
+                Type=simple
+                User=root
+                ExecStartPre=-/usr/bin/docker stop mediamtx
+                ExecStartPre=-/usr/bin/docker rm mediamtx
+                ExecStart=/usr/bin/docker run --rm --name mediamtx --network host bluenviron/mediamtx:latest
+                Restart=always
+                RestartSec=5
+
+                [Install]
+                WantedBy=multi-user.target
+                UNITEOF
+
+                cat > /etc/systemd/system/safevision-cv.service <<UNITEOF
+                [Unit]
+                Description=SafeVision CV Pipeline (Docker)
+                After=network.target docker.service mediamtx.service
+                Requires=docker.service
+
+                [Service]
+                Type=simple
+                User=root
+                EnvironmentFile=/etc/safevision/cv.env
+                ExecStartPre=-/usr/bin/docker stop safevision-cv
+                ExecStartPre=-/usr/bin/docker rm safevision-cv
+                ExecStart=/usr/bin/docker run --rm --name safevision-cv --network host --env-file /etc/safevision/cv.env ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EcrCvRepoName}:latest
+                Restart=always
+                RestartSec=5
+
+                [Install]
+                WantedBy=multi-user.target
+                UNITEOF
+
+                systemctl daemon-reload
+                systemctl enable --now mediamtx
+                systemctl enable --now safevision-cv
+                echo "=== SafeVision CV bootstrap terminado: $(date) ==="
+
+  # ────────────────────────────────────────────────────────────
+  # Elastic IPs
+  # ────────────────────────────────────────────────────────────
+
+  BackendEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref BackendInstance
+      Tags:
+        - Key: Name
+          Value: eip-backend
+
+  CVEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref CVInstance
+      Tags:
+        - Key: Name
+          Value: eip-cv
+
+Outputs:
+  BackendPublicIP:
+    Description: IP publica del backend (Swagger, GET /api/v1/incidents).
+    Value: !Ref BackendEIP
+
+  CVPublicIP:
+    Description: IP publica de la EC2 de CV (SSH para correr simulate_camera.sh).
+    Value: !Ref CVEIP
+
+  BackendPrivateIP:
+    Description: >
+      IP privada del backend — el CV la usa como MQTT_BROKER_HOST (el broker
+      Mosquitto corre en esta misma instancia). Ya no hace falta ningun paso
+      de "wire" post-creacion: la IP se resuelve sola via !Sub dentro del
+      UserData de la EC2 de CV, que se crea despues del backend.
+    Value: !GetAtt BackendInstance.PrivateIp
+
+  CVPrivateIP:
+    Description: IP privada de la EC2 de CV (solo referencia/debug).
+    Value: !GetAtt CVInstance.PrivateIp
+
+  RDSEndpoint:
+    Description: Endpoint del RDS (sin acceso publico, solo referencia).
+    Value: !GetAtt RDSInstance.Endpoint.Address
+
+  EvidenceBucketName:
+    Description: Bucket S3 de evidencia (foto+clip) — lifecycle 60 dias, DeletionPolicy Retain.
+    Value: !Ref EvidenceBucketName
+
+  SSHBackendCommand:
+    Value: !Sub ssh -i ${KeyPairName}.pem ubuntu@${BackendEIP}
+
+  SSHCVCommand:
+    Value: !Sub ssh -i ${KeyPairName}.pem ubuntu@${CVEIP}
+
+  SimulateCameraCommand:
+    Description: Comando para disparar la demo una vez conectado por SSH a la EC2 CV.
+    Value: ./simulate_camera.sh 1

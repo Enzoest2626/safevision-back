@@ -29,8 +29,14 @@ CREATE TABLE notification_statuses (
 -- DATOS MAESTROS
 -- ────────────────────────────────────────────────────────────
 
+-- code: identificador estable para el enrutamiento MQTT
+-- (safevision/{siteCode}/...) — se define solo al crear la obra
+-- (autogenerado si no se especifica) y es inmutable despues: un update
+-- que lo cambiaria rompería en silencio la comunicación con el CV, que
+-- arma sus topics una sola vez al arrancar. Ver CLAUDE.md.
 CREATE TABLE sites (
     id         BIGINT       PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    code       VARCHAR(50)  NOT NULL UNIQUE,
     name       VARCHAR(100) NOT NULL UNIQUE,
     location   VARCHAR(200),
     active     BOOLEAN      NOT NULL DEFAULT TRUE,
@@ -42,18 +48,27 @@ CREATE TABLE sites (
 
 -- Zonas dentro de una obra (ej. "Piso 2 - Construcción", "Almacén").
 -- Una obra tiene varias zonas; una zona puede agrupar varias cámaras.
+-- code: unico por obra (no global) — dos obras distintas pueden repetir
+-- "Z1" sin chocar porque el topic MQTT ya las separa por siteCode
+-- primero. Mismo criterio de inmutabilidad que sites.code.
 CREATE TABLE zones (
     id         BIGINT       PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     site_id    BIGINT       NOT NULL REFERENCES sites(id),
+    code       VARCHAR(50)  NOT NULL,
     name       VARCHAR(100) NOT NULL,
     active     BOOLEAN      NOT NULL DEFAULT TRUE,
     created_at TIMESTAMP    NOT NULL DEFAULT NOW(),
     created_by VARCHAR(100),
     updated_at TIMESTAMP    NOT NULL DEFAULT NOW(),
     updated_by VARCHAR(100),
-    UNIQUE (site_id, name)
+    UNIQUE (site_id, name),
+    UNIQUE (site_id, code)
 );
 
+-- zone_id nulo = camara registrada pero sin enlazar todavia: el backend
+-- no publica su config MQTT hasta que tenga site+zone+code completos
+-- (ver CameraService/CLAUDE.md). code: mismo criterio de inmutabilidad
+-- que sites.code/zones.code, ya global-unico desde antes de esta nota.
 CREATE TABLE cameras (
     id         BIGINT       PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     site_id    BIGINT       NOT NULL REFERENCES sites(id),
@@ -104,21 +119,32 @@ CREATE TABLE users (
 -- EVENTOS (inmutables)
 -- ────────────────────────────────────────────────────────────
 
+-- external_id: UUID generado por el modulo CV, correlaciona el incidente
+-- con el mensaje de "clip listo" que llega minutos despues por MQTT.
 CREATE TABLE incidents (
-    id          BIGINT    PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-    worker_id   BIGINT    NOT NULL REFERENCES workers(id),
-    camera_id   BIGINT    NOT NULL REFERENCES cameras(id),
-    site_id     BIGINT    NOT NULL REFERENCES sites(id),
-    missing_epp TEXT[]    NOT NULL,
-    occurred_at TIMESTAMP NOT NULL,
-    created_at  TIMESTAMP NOT NULL DEFAULT NOW()
+    id          BIGINT       PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    worker_id   BIGINT       NOT NULL REFERENCES workers(id),
+    camera_id   BIGINT       NOT NULL REFERENCES cameras(id),
+    site_id     BIGINT       NOT NULL REFERENCES sites(id),
+    external_id VARCHAR(36)  NOT NULL UNIQUE,
+    missing_epp TEXT[]       NOT NULL,
+    occurred_at TIMESTAMP    NOT NULL,
+    created_at  TIMESTAMP    NOT NULL DEFAULT NOW()
 );
 
+-- evidence_type: 'PHOTO' | 'VIDEO'.
+-- frame_b64: solo lo usa el flujo HTTP legacy (POST /api/v1/incidents).
+-- storage_key/duration_seconds/file_size_bytes: solo el flujo MQTT/S3 (CV
+-- sube foto y clip a S3, el backend solo referencia la key para presignar).
 CREATE TABLE evidence (
-    id          BIGINT    PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-    incident_id BIGINT    NOT NULL REFERENCES incidents(id),
-    frame_b64   TEXT      NOT NULL,
-    created_at  TIMESTAMP NOT NULL DEFAULT NOW()
+    id               BIGINT           PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    incident_id      BIGINT           NOT NULL REFERENCES incidents(id),
+    evidence_type    VARCHAR(20)      NOT NULL,
+    frame_b64        TEXT,
+    storage_key      VARCHAR(500),
+    duration_seconds DOUBLE PRECISION,
+    file_size_bytes  BIGINT,
+    created_at       TIMESTAMP        NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE notifications (
@@ -217,7 +243,7 @@ CREATE INDEX idx_site_epp_site      ON site_epp_requirements(site_id);
 -- SEED INICIAL (ver V2__seed_catalogs.sql)
 -- ────────────────────────────────────────────────────────────
 -- user_roles:              ADMIN, SUPERVISOR
--- notification_channels:   TELEGRAM, HIKVISION
+-- notification_channels:   TELEGRAM
 -- notification_statuses:   PENDING, SENT, FAILED
 -- epp_parameters:          casco, chaleco, guantes
 -- site_epp_requirements:   (vacío — se configura por obra desde el frontend)

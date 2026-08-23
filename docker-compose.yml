@@ -1,0 +1,56 @@
+# SafeVision Backend — este proyecto y su compañero inseparable: Mosquitto
+# corre junto al backend (mismo criterio que en produccion, ver CLAUDE.md
+# "Infraestructura AWS" -- Mosquitto vive en la misma EC2 que el backend,
+# nunca aparte). Postgres SI se asume externo -- en AWS es RDS, un servicio
+# manejado aparte, no algo que corra "junto" al backend -- asi que acá
+# apunta afuera via host.docker.internal (tu maquina, o cualquier otra
+# instancia a la que apuntes con las variables de entorno de abajo).
+#
+# "host.docker.internal" apunta a tu maquina (donde probablemente corra
+# Postgres si no usas docker-compose.full.yml) -- "localhost" ahi adentro
+# del contenedor apuntaria al propio contenedor, no a tu maquina.
+#
+# Para el flujo completo (Postgres + Mosquitto + backend + frontend + CV +
+# simulador de camara RTSP, todo en un solo comando) usar en cambio:
+#   docker compose -f docker-compose.full.yml up --build
+#
+# Uso (backend + mosquitto):
+#   cp .env.example .env
+#   docker compose up --build
+
+services:
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    # Config minima inline: sin persistencia, permite conexiones anonimas
+    # (solo para desarrollo local, nunca asi en el stack de AWS real).
+    command: >
+      sh -c "printf 'listener 1883\nallow_anonymous true\n' > /mosquitto/config/mosquitto.conf
+      && /docker-entrypoint.sh /usr/sbin/mosquitto -c /mosquitto/config/mosquitto.conf"
+    ports:
+      - "1883:1883"
+
+  backend:
+    build:
+      context: .
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-dev}
+      SPRING_PROFILES_ACTIVE: ${APP_ENV:-dev}
+      SPRING_R2DBC_URL: ${SPRING_R2DBC_URL:-r2dbc:postgresql://host.docker.internal:5432/safevision}
+      SPRING_R2DBC_USERNAME: ${SPRING_R2DBC_USERNAME:-safevision}
+      SPRING_R2DBC_PASSWORD: ${SPRING_R2DBC_PASSWORD:-safevision}
+      ALERT_SERVICE_TOKEN: ${ALERT_SERVICE_TOKEN:-dev-token}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      MQTT_BROKER_HOST: mosquitto
+      MQTT_BROKER_PORT: "1883"
+      S3_BUCKET: ${S3_BUCKET:-}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+    ports:
+      - "8080:8080"
+    depends_on:
+      - mosquitto

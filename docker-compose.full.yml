@@ -1,0 +1,162 @@
+# SafeVision — FLUJO COMPLETO: Postgres + backend + frontend + MediaMTX + CV
+# + simulador de cámara, todo en un solo comando. Uso exclusivo de
+# desarrollo/prueba — no tiene relacion con el deploy a AWS (ver
+# infra/deploy.sh + infra/README.md para eso, que usa CloudFormation, no
+# docker-compose).
+#
+# Este es el archivo "con sufijo" para el flujo completo. El docker-compose.yml
+# plano (sin sufijo) de esta misma carpeta SOLO levanta el backend solo —
+# mismo criterio en safevision-front (frontend solo) y
+# safevision-computer-vision (cv-app solo / docker-compose.rtsp-sim.yml para
+# el simulador de cámara aislado).
+#
+# Uso (desde la raiz del repo):
+#   docker compose -f docker-compose.full.yml up --build
+#   (en otra terminal, para "encender la camara" una vez que todo esta arriba)
+#   docker compose -f docker-compose.full.yml run --rm camera-simulator
+#
+# Variables opcionales (crear .env en la raiz, ver .env.example):
+#   CV_REPO_PATH, FRONTEND_REPO_PATH   rutas a los repos hermanos
+#   ALERT_SERVICE_TOKEN, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+#   FLASK_SECRET_KEY
+#   S3_BUCKET, AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+#     (bucket real de AWS — no hay S3 local en este compose. El CV solo
+#     publica un incidente si logro subir la foto: sin estas variables
+#     configuradas, no se genera ningun incidente/alerta de punta a punta)
+#
+# El broker MQTT (mosquitto) es local y no necesita credenciales — CV y
+# backend se conectan solos via MQTT_BROKER_HOST=mosquitto.
+
+services:
+
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: safevision
+      POSTGRES_USER: safevision
+      POSTGRES_PASSWORD: safevision
+    volumes:
+      - ./docs/init-schema.sql:/docker-entrypoint-initdb.d/1-schema.sql:ro
+      - ./docs/seed-data.sql:/docker-entrypoint-initdb.d/2-seed.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U safevision"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    # Config minima inline: sin persistencia, permite conexiones anonimas
+    # (solo para desarrollo local, nunca asi en el stack de AWS real).
+    command: >
+      sh -c "printf 'listener 1883\nallow_anonymous true\n' > /mosquitto/config/mosquitto.conf
+      && /docker-entrypoint.sh /usr/sbin/mosquitto -c /mosquitto/config/mosquitto.conf"
+    ports:
+      - "1883:1883"
+
+  backend:
+    build:
+      context: .
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-dev}
+      SPRING_PROFILES_ACTIVE: ${APP_ENV:-dev}
+      SPRING_R2DBC_URL: r2dbc:postgresql://postgres:5432/safevision
+      SPRING_R2DBC_USERNAME: safevision
+      SPRING_R2DBC_PASSWORD: safevision
+      ALERT_SERVICE_TOKEN: ${ALERT_SERVICE_TOKEN:-dev-token}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      MQTT_BROKER_HOST: mosquitto
+      MQTT_BROKER_PORT: "1883"
+      S3_BUCKET: ${S3_BUCKET:-}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+
+  frontend:
+    build:
+      context: ${FRONTEND_REPO_PATH:-../safevision-front}
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-dev}
+      BACKEND_MODE: live
+      BACKEND_API_URL: http://backend:8080/api/v1
+      FLASK_SECRET_KEY: ${FLASK_SECRET_KEY:-dev-secret-change-me}
+    ports:
+      - "5000:5000"
+    depends_on:
+      - backend
+
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    restart: unless-stopped
+    ports:
+      - "8554:8554"
+
+  cv-app:
+    build:
+      context: ${CV_REPO_PATH:-../safevision-computer-vision}
+    # Igual que Restart=always en el systemd unit real (infra/cloudformation):
+    # cuando el video termina y RTSP se desconecta de verdad (no un archivo
+    # local, un stream real), el proceso termina — restart trae de vuelta
+    # el loop de deteccion, que reintenta conectar tanto a RTSP como al broker MQTT.
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-dev}
+      VIDEO_SOURCE: rtsp://mediamtx:8554/obra1
+      MQTT_BROKER_HOST: mosquitto
+      MQTT_BROKER_PORT: "1883"
+      SITE_ID: "1"
+      SITE_NAME: Obra-Principal
+      CAMERA_ID: CAM-01
+      COOLDOWN_SECONDS: "10"
+      MODEL_PATH: models/yolov11s/exp3/weights/best.pt
+      CLIP_ENABLED: "true"
+      S3_BUCKET: ${S3_BUCKET:-}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+    depends_on:
+      - mediamtx
+      - mosquitto
+      - backend
+
+  # Publica el video UNA sola vez (~36s, sin loop) al path /obra1 de MediaMTX
+  # -- decision a proposito para no gastar recursos/costos de S3 dejandolo
+  # corriendo indefinidamente durante pruebas. Efecto secundario conocido y
+  # aceptado: un incidente que dispare en los ultimos ~5s del video (menos
+  # que CLIP_POST_SECONDS) no alcanza a juntar su ventana post-evento y ese
+  # clip puntual no sube -- el bug real que hacia que NINGUN clip subiera
+  # nunca (FPS mal calculado sobre RTSP, ver _resolve_fps en
+  # realtime_monitor.py del CV) ya esta arreglado aparte, asi que la mayoria
+  # de los incidentes de una corrida si completan su clip. Cuando el video
+  # termina, mediamtx se queda sin publicador y cv-app entra en su loop de
+  # reconexion normal (sin limite, por diseño -- ver RTSPCapture) hasta que
+  # se vuelva a correr este comando o se pare cv-app. No arranca con 'up',
+  # se corre a mano cuando queres "encender la camara":
+  #   docker compose -f docker-compose.full.yml run --rm camera-simulator
+  # Para usar obra2/obra3, o para loop continuo puntualmente, sobreescribir
+  # el command al correrlo.
+  camera-simulator:
+    image: jrottenberg/ffmpeg:6.1-ubuntu
+    entrypoint: ["ffmpeg"]
+    # OBRA_REAL_1.mp4 esta roto (sin streams legibles ni por ffmpeg ni por
+    # VLC, confirmado en pruebas reales) -- OBRA_REAL_2.mp4 si funciona.
+    command: ["-re", "-i", "/videos/OBRA_REAL_2.mp4", "-c", "copy", "-f", "rtsp", "rtsp://mediamtx:8554/obra1"]
+    volumes:
+      - ${CV_REPO_PATH:-../safevision-computer-vision}/tests/fixtures/video:/videos:ro
+    depends_on:
+      - mediamtx
+    profiles: ["manual"]
