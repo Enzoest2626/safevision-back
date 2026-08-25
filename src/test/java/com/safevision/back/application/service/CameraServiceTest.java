@@ -7,11 +7,7 @@ import static org.mockito.Mockito.*;
 
 import com.safevision.back.application.ports.out.CameraConfigPublisherPort;
 import com.safevision.back.application.ports.out.CameraRepositoryPort;
-import com.safevision.back.application.ports.out.SiteRepositoryPort;
-import com.safevision.back.application.ports.out.ZoneRepositoryPort;
 import com.safevision.back.domain.model.Camera;
-import com.safevision.back.domain.model.Site;
-import com.safevision.back.domain.model.Zone;
 import com.safevision.back.infrastructure.web.dto.CameraRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -35,24 +31,12 @@ class CameraServiceTest {
     private CameraRepositoryPort cameraRepository;
 
     @Mock
-    private SiteRepositoryPort siteRepository;
-
-    @Mock
-    private ZoneRepositoryPort zoneRepository;
-
-    @Mock
     private CameraConfigPublisherPort cameraConfigPublisher;
 
     private CameraService service;
 
-    private final Site site = new Site(10L, "OBRA-A", "Obra A", null, true,
-            LocalDateTime.now(), "system", LocalDateTime.now(), "system");
-
-    private final Zone zone = new Zone(20L, 10L, "ZONA-A", "Zona A", true,
-            LocalDateTime.now(), "system", LocalDateTime.now(), "system");
-
     // zoneId=20L (enlazada) — la mayoría de los tests verifican que se
-    // publica; los que necesitan zoneId=null (sin enlazar) usan su propio fixture.
+    // notifica; los que necesitan zoneId=null (sin enlazar) usan su propio fixture.
     private final Camera camera = new Camera(1L, 10L, 20L, "CAM-01", "Entrada",
             "10.0.0.5", null, true, LocalDateTime.now(), "system", LocalDateTime.now(), "system");
 
@@ -60,9 +44,7 @@ class CameraServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new CameraService(cameraRepository, siteRepository, zoneRepository, cameraConfigPublisher);
-        lenient().when(siteRepository.findById(10L)).thenReturn(Mono.just(site));
-        lenient().when(zoneRepository.findById(20L)).thenReturn(Mono.just(zone));
+        service = new CameraService(cameraRepository, cameraConfigPublisher);
         lenient().when(cameraRepository.existsByCode(anyString())).thenReturn(Mono.just(false));
     }
 
@@ -111,7 +93,7 @@ class CameraServiceTest {
     }
 
     @Test
-    @DisplayName("create persiste la cámara nueva y publica su config MQTT")
+    @DisplayName("create persiste la cámara nueva y notifica su config al CV")
     void create_persisteCamara() {
         when(cameraRepository.save(any(Camera.class))).thenReturn(Mono.just(camera));
 
@@ -120,7 +102,7 @@ class CameraServiceTest {
                 .verifyComplete();
 
         verify(cameraRepository).save(any(Camera.class));
-        verify(cameraConfigPublisher).publishCameraConfig("OBRA-A", "ZONA-A", "CAM-01", null, true);
+        verify(cameraConfigPublisher).publishCameraConfig(camera);
     }
 
     @Test
@@ -150,7 +132,7 @@ class CameraServiceTest {
     }
 
     @Test
-    @DisplayName("create sin zona no publica config MQTT — cámara sin enlazar todavía")
+    @DisplayName("create sin zona no notifica config al CV — cámara sin enlazar todavía")
     void create_sinZona_noPublica() {
         CameraRequest sinZona = new CameraRequest(10L, null, "CAM-02", "Entrada", "10.0.0.5", null);
         Camera guardada = new Camera(2L, 10L, null, "CAM-02", "Entrada",
@@ -165,7 +147,7 @@ class CameraServiceTest {
     }
 
     @Test
-    @DisplayName("update sobre cámara existente persiste cambios y publica su config MQTT")
+    @DisplayName("update sobre cámara existente persiste cambios y notifica su config al CV")
     void update_existente_persisteCambios() {
         when(cameraRepository.findById(1L)).thenReturn(Mono.just(camera));
         when(cameraRepository.save(any(Camera.class))).thenReturn(Mono.just(camera));
@@ -174,7 +156,7 @@ class CameraServiceTest {
                 .assertNext(response -> assertThat(response.code()).isEqualTo("CAM-01"))
                 .verifyComplete();
 
-        verify(cameraConfigPublisher).publishCameraConfig("OBRA-A", "ZONA-A", "CAM-01", null, true);
+        verify(cameraConfigPublisher).publishCameraConfig(camera);
     }
 
     @Test
@@ -205,7 +187,7 @@ class CameraServiceTest {
     }
 
     @Test
-    @DisplayName("delete desactiva la cámara (soft delete) y publica active=false")
+    @DisplayName("delete desactiva la cámara (soft delete) y notifica active=false")
     void delete_existente_desactiva() {
         when(cameraRepository.findById(1L)).thenReturn(Mono.just(camera));
         // Devuelve el mismo objeto guardado (no el fixture fijo) para poder
@@ -218,7 +200,7 @@ class CameraServiceTest {
                 .verifyComplete();
 
         verify(cameraRepository).save(argThat(c -> !c.active()));
-        verify(cameraConfigPublisher).publishCameraConfig("OBRA-A", "ZONA-A", "CAM-01", null, false);
+        verify(cameraConfigPublisher).publishCameraConfig(argThat(c -> !c.active()));
     }
 
     @Test

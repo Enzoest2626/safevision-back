@@ -124,23 +124,23 @@ src/main/java/com/safevision/back/
 │       ├── ZoneService, SiteContactService, EppParameterService
 │       ├── IncidentNotificationService  ← resuelve contactos + notifica + registra en `notifications`
 │       └── IncidentService              ← orquesta: persiste incidente+evidencia,
-│                                            registerFromCv/registerClipReady (flujo MQTT)
+│                                            registerFromCv/registerClipReady (flujo HTTP del CV)
 └── infrastructure/
     ├── web/                 ← Controllers (driving) + dto/ (Request/Response)
     │   ├── SiteController, ZoneController, SiteContactController
     │   ├── CameraController, WorkerController, UserController
-    │   ├── IncidentController        ← HU10 HTTP legacy + GET .../evidence
+    │   ├── IncidentController        ← HU10 HTTP legacy (frame_b64 inline) + GET .../evidence
+    │   │                                + POST /api/v1/cv/incidents(/clips) (flujo activo, dto/
+    │   │                                CvIncidentMessage, CvClipReadyMessage)
     │   └── EppParameterController    ← HU04
     ├── persistence/         ← 15 repos Spring Data, cada uno
     │                            `extends XRepositoryPort {}` (implementación via proxy)
-    ├── messaging/            ← MqttClientConfig, MqttIncidentSubscriber (driving,
-    │                            suscribe a incidentes/clips del CV), MqttRulesPublisher
-    │                            (implementa RulesPublisherPort), dto/ (CvIncidentMessage,
-    │                            CvClipReadyMessage)
+    ├── webhook/              ← HttpRulesPublisher, HttpCameraConfigPublisher (implementan
+    │                            RulesPublisherPort/CameraConfigPublisherPort — notifican
+    │                            al CV por HTTP directo a camera.ipAddress, sin broker)
     ├── notification/         ← TelegramNotificationService (implementa NotificationChannelPort)
     ├── storage/              ← EvidencePresignService (implementa EvidenceStoragePort, S3 URLs prefirmadas)
-    └── config/                ← OpenApiConfig, SecurityConfig, TelegramProperties,
-                                   MqttProperties, S3Properties
+    └── config/                ← OpenApiConfig, SecurityConfig, TelegramProperties, S3Properties
 ```
 
 **IDs:** `Long` (BIGINT `GENERATED ALWAYS AS IDENTITY`), no UUID
@@ -242,7 +242,9 @@ construir la pantalla de gestión de usuarios del frontend).
 
 | Método | Endpoint                       | HU    | Descripción                                      |
 |--------|---------------------------------|-------|---------------------------------------------------|
-| POST   | `/api/v1/incidents`             | HU10  | **Legacy HTTP** — sin uso activo del CV (que ahora publica por MQTT), pero sigue funcionando con Bearer token (`ALERT_SERVICE_TOKEN`); se deja sin borrar por si hace falta volver atrás |
+| POST   | `/api/v1/cv/incidents`          | HU10  | **Activo** — el CV manda el incidente con evidencia ya en S3 (`photo_s3_key`); Bearer token (`ALERT_SERVICE_TOKEN`) |
+| POST   | `/api/v1/cv/incidents/clips`    | HU10  | **Activo** — aviso de "clip listo" (llega minutos después, correlacionado por `incident_id`); mismo Bearer token |
+| POST   | `/api/v1/incidents`             | HU10  | **Legacy** — sin uso activo (payload con `frame_b64` inline, sin S3); sigue funcionando con el mismo Bearer token; se deja sin borrar por si hace falta volver atrás |
 | GET    | `/api/v1/incidents`             | HU10  | Lista incidentes (filtros opcionales: `siteId`, `workerId`, `from`, `to`) |
 | GET    | `/api/v1/incidents/{id}`        | HU10  | Detalle de incidente                             |
 | GET    | `/api/v1/incidents/{id}/evidence` |     | Evidencia (foto/clip) del incidente, con URL de S3 prefirmada de corta duración |
@@ -316,15 +318,20 @@ en cuanto exista un flujo real de gestión de usuarios.
 
 ---
 
-### Ingesta de incidentes — MQTT (flujo activo) vs HTTP (legacy)
+### Ingesta de incidentes — HTTP directo (flujo activo) vs legacy inline
 
-El CV Module ya no llama a `POST /api/v1/incidents` — publica por MQTT y el
-backend escucha (`MqttIncidentSubscriber`, suscrito a `safevision/+/incidents`
-y `safevision/+/incidents/clips`). La foto/clip ya están en S3, el mensaje
-solo trae la referencia.
+> **Nota histórica:** entre 2026-08 y esta versión, este flujo pasó por MQTT
+> (`MqttIncidentSubscriber`, broker `eclipse-mosquitto`). Se revirtió a HTTP
+> directo para no depender de un servidor de broker adicional — ver tag git
+> `mqtt-pre-https-mosquitto2` para el estado completo de esa arquitectura si
+> hiciera falta volver a mirarla.
+
+El CV Module llama a `POST /api/v1/cv/incidents` (`IncidentController`) — la
+foto ya está en S3, el payload solo trae la referencia. Mismo Bearer token
+(`ALERT_SERVICE_TOKEN`) que el resto de la ingesta.
 
 ```json
-// safevision/{siteId}/incidents — inmediato, foto ya subida a S3
+// POST /api/v1/cv/incidents — inmediato, foto ya subida a S3
 {
   "incident_id": "uuid-generado-por-cv",
   "worker_code": 3,
@@ -336,7 +343,7 @@ solo trae la referencia.
 }
 ```
 ```json
-// safevision/{siteId}/incidents/clips — minutos despues, correlacionado por incident_id
+// POST /api/v1/cv/incidents/clips — minutos despues, correlacionado por incident_id
 {
   "incident_id": "uuid-generado-por-cv",
   "s3_key": "incidents/2026-08-10/uuid-generado-por-cv/clip.mp4",
@@ -345,7 +352,8 @@ solo trae la referencia.
 }
 ```
 
-Payload legacy `POST /api/v1/incidents` (sigue existiendo, sin uso activo):
+Payload legacy `POST /api/v1/incidents` (sigue existiendo, sin uso activo,
+sin S3, evidencia inline en base64):
 
 ```json
 {
@@ -358,26 +366,28 @@ Payload legacy `POST /api/v1/incidents` (sigue existiendo, sin uso activo):
 }
 ```
 
-### Reglas EPP — MQTT retained (reemplaza el webhook HTTP de HU04)
+### Reglas EPP — webhook HTTP (reemplaza el retained MQTT)
 
-`MqttRulesPublisher` publica (retained) `{"required_epp": [...]}` en
-`safevision/{siteId}/rules` cuando cambian las reglas de una obra
-(`PUT /api/v1/parameters/{siteId}`) — el CV se suscribe una vez y recibe el
-último valor apenas se conecta, sin polling. `CvNotificationService`/
-`CvProperties` (el webhook HTTP viejo, `CV_RELOAD_URL`) se eliminaron: ya no
-tenían sentido una vez que el CV dejó de exponer ese endpoint.
+`HttpRulesPublisher` (implementa `RulesPublisherPort`) hace POST best-effort
+de `{"required_epp": [...]}` a `http://{camera.ipAddress}:{CV_WEBHOOK_PORT}/webhook/rules`
+por cada cámara activa de la obra (fan-out — una obra puede tener varias
+cámaras/instancias del CV) cuando cambian las reglas
+(`PUT /api/v1/parameters/{siteId}`). Un fallo (CV apagado, red caída) se
+loguea y no bloquea ni propaga error — mismo criterio best-effort que tenía
+el publisher MQTT.
 
-### Config de cámara — MQTT retained (rtsp_url + active dinámicos)
+### Config de cámara — webhook HTTP (rtsp_url + active dinámicos)
 
-Mismo patrón que las reglas EPP, para el problema de "¿a qué URL se conecta
-el CV y debería seguir intentando?": `MqttCameraConfigPublisher` publica
-(retained) `{"rtsp_url": "...", "active": true|false}` en
-`safevision/{siteId}/cameras/{cameraCode}/config` cada vez que
-`CameraService.create/update/delete` toca una cámara. El CV se suscribe por
-`CAMERA_ID` y reemplaza su `VIDEO_SOURCE` estático por el `rtsp_url` de la
-cámara en cuanto llega — y si `active=false`, deja de reintentar la conexión
-por completo (reintentar sería en vano) hasta que vuelva a activarse. Ver
-`RTSPCapture._wait_while_inactive` / `MqttCameraConfigSubscriber` del lado CV.
+Mismo patrón que las reglas EPP: `HttpCameraConfigPublisher` (implementa
+`CameraConfigPublisherPort`) hace POST best-effort de
+`{"camera_code": "...", "rtsp_url": "...", "active": true|false}` a
+`http://{camera.ipAddress}:{CV_WEBHOOK_PORT}/webhook/config` cada vez que
+`CameraService.create/update/delete` toca una cámara — pero solo si ya
+tiene zona asignada (`zoneId != null`, ver `CameraService.publishConfig`,
+sección "Estado Actual"). El CV expone ese webhook con un pequeño servidor
+HTTP propio en su mismo proceso (no un contenedor aparte) y reemplaza su
+`VIDEO_SOURCE` estático por el `rtsp_url` recibido — si `active=false`, deja
+de reintentar la conexión hasta que vuelva a activarse.
 
 ---
 
@@ -410,8 +420,12 @@ CREATE TABLE notification_channels (id BIGINT PRIMARY KEY GENERATED ALWAYS AS ID
 CREATE TABLE notification_statuses  (id BIGINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY, code VARCHAR(50) NOT NULL UNIQUE, name VARCHAR(100) NOT NULL);
 
 -- Obras / construction sites
+-- code: identificador de negocio estable — autogenerado si no se especifica
+-- al crear, inmutable despues (el CV lo usa para identificarse en cada
+-- evento HTTP que manda).
 CREATE TABLE sites (
     id         BIGINT       PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    code       VARCHAR(50)  NOT NULL UNIQUE,
     name       VARCHAR(100) NOT NULL UNIQUE,
     location   VARCHAR(200),
     active     BOOLEAN      NOT NULL DEFAULT TRUE,
@@ -421,20 +435,24 @@ CREATE TABLE sites (
     updated_by VARCHAR(100)
 );
 
--- Zonas dentro de una obra (ej. "Piso 2", "Almacén") — agrupan cámaras
+-- Zonas dentro de una obra (ej. "Piso 2", "Almacén") — agrupan cámaras.
+-- code: unico por obra (no global), mismo criterio de inmutabilidad que sites.code.
 CREATE TABLE zones (
     id         BIGINT       PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     site_id    BIGINT       NOT NULL REFERENCES sites(id),
+    code       VARCHAR(50)  NOT NULL,
     name       VARCHAR(100) NOT NULL,
     active     BOOLEAN      NOT NULL DEFAULT TRUE,
     created_at TIMESTAMP    NOT NULL DEFAULT NOW(),
     created_by VARCHAR(100),
     updated_at TIMESTAMP    NOT NULL DEFAULT NOW(),
     updated_by VARCHAR(100),
-    UNIQUE (site_id, name)
+    UNIQUE (site_id, name),
+    UNIQUE (site_id, code)
 );
 
--- Cámaras IP Hikvision
+-- Cámaras IP — zone_id nulo = registrada pero sin enlazar todavia (el
+-- backend no notifica su config al CV hasta que tenga zona asignada).
 CREATE TABLE cameras (
     id         BIGINT       PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     site_id    BIGINT       NOT NULL REFERENCES sites(id),
@@ -482,8 +500,8 @@ CREATE TABLE users (
 );
 
 -- Incidentes de incumplimiento EPP (inmutable)
--- external_id: UUID generado por el CV, correlaciona el mensaje de "clip
--- listo" (llega minutos despues por MQTT) con el incidente ya persistido.
+-- external_id: UUID generado por el CV, correlaciona el aviso de "clip
+-- listo" (llega minutos despues, POST separado) con el incidente ya persistido.
 CREATE TABLE incidents (
     id          BIGINT       PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     worker_id   BIGINT       NOT NULL REFERENCES workers(id),
@@ -497,7 +515,8 @@ CREATE TABLE incidents (
 
 -- Evidencia visual: foto y/o clip de video (inmutable)
 -- evidence_type: 'PHOTO' | 'VIDEO'. frame_b64 solo lo usa el flujo HTTP
--- legacy; storage_key/duration_seconds/file_size_bytes solo el flujo MQTT/S3.
+-- legacy; storage_key/duration_seconds/file_size_bytes solo el flujo nuevo
+-- del CV con evidencia en S3.
 CREATE TABLE evidence (
     id               BIGINT           PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     incident_id      BIGINT           NOT NULL REFERENCES incidents(id),
@@ -569,12 +588,12 @@ CREATE TABLE site_epp_requirements (
 
 ---
 
-## Flujo de un Incidente (activo — MQTT)
+## Flujo de un Incidente (activo — HTTP)
 
 ```
 CV Module
    │
-   └─ MQTT safevision/{siteId}/incidents  (MqttIncidentSubscriber)
+   └─ POST /api/v1/cv/incidents  (IncidentController → IncidentService.registerFromCv)
          │
          ├─ 1. Resolver worker_code + camera_code + site_name → IDs (JOIN a BD)
          ├─ 2. Persistir en `incidents` (con external_id = incident_id del CV)
@@ -584,7 +603,7 @@ CV Module
          ├─ 6. TelegramNotificationService.sendIncidentAlertByUrl → Telegram Bot API
          └─ 7. Persistir en `notifications` (SENT / FAILED por contacto)
 
-   └─ MQTT safevision/{siteId}/incidents/clips  (minutos despues)
+   └─ POST /api/v1/cv/incidents/clips  (minutos despues)
          ├─ 1. Buscar incidente por external_id
          └─ 2. Persistir evidencia VIDEO en `evidence` — no notifica de nuevo
 ```
@@ -614,16 +633,12 @@ TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHAT_ID=
 
 # Seguridad
-ALERT_SERVICE_TOKEN=    # Bearer token que valida el módulo CV (solo el endpoint HTTP legacy)
+ALERT_SERVICE_TOKEN=    # Bearer token que valida el módulo CV (endpoints /api/v1/incidents y /api/v1/cv/**)
 JWT_SECRET=              # Firma los JWT de /api/v1/auth/login — mínimo 32 bytes, nunca commitear el valor real
 JWT_EXPIRATION_MINUTES=480   # Vigencia del JWT (default 8h)
 
-# MQTT (mensajeria CV<->Backend — incidentes/clips/reglas)
-MQTT_BROKER_HOST=
-MQTT_BROKER_PORT=1883
-MQTT_USERNAME=
-MQTT_PASSWORD=
-MQTT_CLIENT_ID=
+# Webhook HTTP hacia el CV (reglas EPP + config de cámara — ver CLAUDE.md)
+CV_WEBHOOK_PORT=5001    # Puerto donde el CV expone su propio webhook (mismo proceso, sin broker)
 
 # S3 (evidencia: foto + clip, subidos por el CV — el backend solo lee/presigna)
 S3_BUCKET=
@@ -645,17 +660,17 @@ Usar perfiles: `application-dev.yml`, `application-prd.yml`.
 |--------------|-----------------------|-----------------------------------------|
 | Base de datos | AWS RDS              | PostgreSQL 16, Multi-AZ en PRD         |
 | Aplicación   | AWS EC2 (Docker)      | Imagen Docker del backend publicada en ECR, pull automático vía UserData (ya no JAR+Corretto) |
-| Evidencia    | AWS S3 (bucket nuevo)  | Foto+clip subidos por el CV, lifecycle 60 días — ver `infra/cloudformation/safevision-stack-mqtt.yaml` |
-| Broker MQTT  | Mosquitto en Docker    | Corre junto al backend en su misma EC2 (`mosquitto.service`), auth anónima acotada por Security Group |
+| Evidencia    | AWS S3 (bucket nuevo)  | Foto+clip subidos por el CV, lifecycle 60 días |
 | Secretos     | AWS Secrets Manager   | Tokens, credenciales de BD            |
 | CI/CD        | GitHub Actions        | Build → Test → Deploy                  |
 
-`infra/cloudformation/safevision-stack.yaml` (el original, HTTP legacy) y
-`safevision-stack-mqtt.yaml` (nuevo, MQTT+S3) coexisten — el segundo es el
-que se usa para deploys nuevos, el primero queda intacto sin uso, mismo
-criterio "no borrar" que el resto del proyecto. `infra/deploy.sh` e
-`infra/README.md` todavía documentan el flujo del stack viejo — ajustarlos
-para el nuevo stack es una tarea aparte, no resuelta todavía.
+> **Pendiente:** `infra/cloudformation/safevision-stack-mqtt.yaml` todavía
+> aprovisiona un contenedor `mosquitto` (systemd unit) que ya no hace falta
+> — se sacó de `docker-compose*.yml` (desarrollo local) pero el
+> CloudFormation real para AWS no se actualizó todavía; queda documentado
+> como deuda, igual que `infra/deploy.sh`/`infra/README.md` (que documentan
+> el flujo del stack original, `safevision-stack.yaml`, sin relación con
+> esto).
 
 ---
 
@@ -666,10 +681,9 @@ carpeta es solo para el deploy real a AWS vía CloudFormation, ver sección
 anterior), mismo criterio de sufijo que `safevision-front` y
 `safevision-computer-vision`:
 
-- **[`docker-compose.yml`](docker-compose.yml)** (sin sufijo) — este
-  proyecto y su compañero inseparable: `backend` + `mosquitto`, mismo
-  criterio que en producción (ver "Infraestructura AWS" arriba — Mosquitto
-  corre junto al backend en su misma EC2, nunca aparte). Postgres sí se
+- **[`docker-compose.yml`](docker-compose.yml)** (sin sufijo) — solo el
+  backend, sin dependencias adicionales (la comunicación con el CV es HTTP
+  directo, no hay broker que levantar junto al backend). Postgres sí se
   asume externo (`host.docker.internal`, ver comentario en el archivo) —
   en AWS es RDS, un servicio manejado aparte, no algo que corra "junto"
   al backend.
@@ -678,7 +692,7 @@ anterior), mismo criterio de sufijo que `safevision-front` y
   docker compose up --build
   ```
 - **[`docker-compose.full.yml`](docker-compose.full.yml)** — el **flujo
-  completo**: `postgres`, `mosquitto` (broker MQTT), `backend`, `frontend`
+  completo**: `postgres`, `backend`, `frontend`
   (build del repo hermano `safevision-front`, `BACKEND_MODE=live`
   apuntando al `backend` de este mismo compose), `mediamtx` (servidor
   RTSP) y `cv-app` (build del repo hermano `safevision-computer-vision`).
@@ -710,7 +724,7 @@ ningún incidente de punta a punta).
 - **Hexagonal** — `application/service/*` depende de interfaces en
   `application/ports/out/`, nunca de una clase concreta de `infrastructure/`.
   Los adaptadores concretos (`TelegramNotificationService`,
-  `EvidencePresignService`, `MqttRulesPublisher`, los 15 repos Spring Data)
+  `EvidencePresignService`, `HttpRulesPublisher`, los 15 repos Spring Data)
   implementan esos puertos explícitamente (`implements XPort`).
 - Un archivo = una clase pública.
 - Clases < 150 líneas salvo justificación.
@@ -741,11 +755,11 @@ feat(setup): inicializa proyecto con dependencias y configuración base
 
 - Framework: JUnit 5 + Mockito + StepVerifier (reactivos).
 - Cobertura mínima: **70%** en `src/main/` — verificado con JaCoCo (`mvn test`, reporte en `target/site/jacoco/`).
-- **Estado verificado (2026-08-10, post-refactor hexagonal):** 140 tests, 0 fallos, 0 errores, 1 omitido.
+- **Estado verificado (post-migración HTTP CV<->Backend):** 172 tests, 0 fallos, 0 errores, 1 omitido.
 - Tests actuales son unitarios (controller con `WebTestClient` + Mockito, service con StepVerifier/Mockito) y espejan la estructura de `src/main/` 1:1 bajo `src/test/`.
 - `Testcontainers` está en `pom.xml` pero **aún no hay tests de integración que lo usen** — pendiente antes de cerrar esa parte del checklist.
-- Mocks para Telegram en tests unitarios (`TelegramNotificationServiceTest`, `TelegramNotificationPerformanceTest`) — `TelegramNotificationService` recibe `WebClient.Builder` inyectado en vez de construir su propio `WebClient`, para poder mockear el `ExchangeFunction` sin llamadas HTTP reales.
-- `MqttIncidentSubscriberTest`/`MqttRulesPublisherTest`/`EvidencePresignServiceTest` mockean `MqttClient` (Paho) y `S3Presigner` (AWS SDK) directamente — sin broker ni bucket reales.
+- Mocks para Telegram en tests unitarios (`TelegramNotificationServiceTest`, `TelegramNotificationPerformanceTest`) — `TelegramNotificationService` recibe `WebClient.Builder` inyectado en vez de construir su propio `WebClient`, para poder mockear el `ExchangeFunction` sin llamadas HTTP reales. Mismo patrón en `HttpRulesPublisherTest`/`HttpCameraConfigPublisherTest`.
+- `EvidencePresignServiceTest` mockea `S3Presigner` (AWS SDK) directamente — sin bucket real.
 
 ---
 
@@ -753,10 +767,10 @@ feat(setup): inicializa proyecto con dependencias y configuración base
 
 | Dirección          | Endpoint / Canal           | Qué hace                              |
 |--------------------|----------------------------|---------------------------------------|
-| CV → Backend       | MQTT `safevision/{siteId}/incidents` | Incidente confirmado, foto ya en S3 |
-| CV → Backend       | MQTT `safevision/{siteId}/incidents/clips` | Clip de video listo (minutos después) |
-| Backend → CV       | MQTT `safevision/{siteId}/rules` (retained) | Reglas EPP activas de la obra — push, no polling |
-| Backend → CV       | MQTT `safevision/{siteId}/cameras/{code}/config` (retained) | `rtsp_url` + `active` de la cámara — push, no polling |
+| CV → Backend       | `POST /api/v1/cv/incidents` | Incidente confirmado, foto ya en S3 |
+| CV → Backend       | `POST /api/v1/cv/incidents/clips` | Clip de video listo (minutos después) |
+| Backend → CV       | `POST http://{camera.ip}:{CV_WEBHOOK_PORT}/webhook/rules` | Reglas EPP activas de la obra — push best-effort, no polling |
+| Backend → CV       | `POST http://{camera.ip}:{CV_WEBHOOK_PORT}/webhook/config` | `rtsp_url` + `active` de la cámara — push best-effort, no polling |
 | CV → Backend       | `POST /api/v1/incidents` (legacy) | Sin uso activo, se deja sin borrar |
 | Frontend → Backend | `POST /api/v1/auth/login`  | Login — único endpoint público, retorna JWT |
 | Frontend → Backend | Todos los demás endpoints REST | Gestión de datos maestros, requieren `Authorization: Bearer <jwt>` (reportes aún no implementados) |
@@ -773,7 +787,7 @@ feat(setup): inicializa proyecto con dependencias y configuración base
 - [x] Entidades de dominio definidas (records Java 21) — `Site`, `Zone`, `Camera`, `Worker`, `User`, `UserRole`, `SiteContact`, `EppParameter`, `SiteEppRequirement`, `Incident`, `Evidence`, `Notification`, `NotificationChannel`, `NotificationStatus`
 - [x] CRUD Sites implementado
 - [x] CRUD Cameras implementado
-- [x] Config de cámara (`rtsp_url`/`active`) push al CV por MQTT retained (`MqttCameraConfigPublisher`) — el CV ya no depende de `VIDEO_SOURCE` fijo por variable de entorno ni reintenta conectar a cámaras inactivas
+- [x] Config de cámara (`rtsp_url`/`active`) notificada al CV por webhook HTTP (`HttpCameraConfigPublisher`) — el CV ya no depende de `VIDEO_SOURCE` fijo por variable de entorno ni reintenta conectar a cámaras inactivas. Solo se notifica si la cámara ya tiene zona asignada (`zoneId != null`) — sin zona queda registrada pero "sin enlazar"
 - [x] CRUD Workers implementado
 - [x] CRUD Users implementado
 - [x] CRUD Zones implementado (anidado bajo obra)
@@ -791,16 +805,20 @@ feat(setup): inicializa proyecto con dependencias y configuración base
 - [x] Login JWT (`POST /api/v1/auth/login`, público) — `AuthService`/`AuthController`/`JwtService`; el resto de endpoints exige `Authorization: Bearer <jwt>` vía `SecurityConfig.jwtAuthFilter` (2026-08-15)
 - [ ] Autorización por rol (ADMIN/SUPERVISOR) — el JWT lleva el claim `role`, pero ningún endpoint lo verifica todavía; hoy cualquier JWT válido pasa
 - [x] Todas las respuestas envueltas en `ApiEnvelope<T>` (`{status, datetime, error, data}` / `{..., errorCode, errorDescription}`) — ver sección [Formato de Respuesta](#formato-de-respuesta--apienvelopet-2026-08-15); DELETE pasó de 204 a 200
-- [x] Tests unitarios — 162 tests, 0 fallos, 1 omitido (verificado 2026-08-16
-      con `./mvnw test`, incluye `JwtServiceTest`/`AuthServiceTest`/
-      `AuthControllerTest`, los 9 `*ControllerTest` del envelope, y
-      `ReportServiceTest`/`ReportControllerTest` de HU12)
+- [x] Tests unitarios — 172 tests, 0 fallos, 1 omitido (verificado
+      post-migración HTTP, `./mvnw verify`, incluye `JwtServiceTest`/
+      `AuthServiceTest`/`AuthControllerTest`, los 9 `*ControllerTest` del
+      envelope, `ReportServiceTest`/`ReportControllerTest` de HU12, y
+      `HttpRulesPublisherTest`/`HttpCameraConfigPublisherTest`/
+      `CvIngestControllerTest`, este último fusionado en
+      `IncidentControllerTest` — ver bullet de ingesta más abajo)
 - [ ] Tests de integración Testcontainers — dependencia agregada, sin tests que la usen aún
 - [x] Infraestructura como código (CloudFormation) — RDS + 2 EC2 (backend, CV), bootstrap 100% automático vía UserData, pull de imágenes Docker desde ECR (`infra/`); pensada para crearse/borrarse por sesión de demo
 - [x] Checkstyle + SpotBugs + Spotless integrados al build (no bloquean, `failOnViolation=false`)
-- [x] Arquitectura hexagonal adoptada — `domain/`, `application/` (services + ports), `infrastructure/` (web, persistence, messaging, notification, storage, config)
-- [x] Ingesta de incidentes/clips por MQTT (`MqttIncidentSubscriber`) — reemplaza `POST /api/v1/incidents` como camino activo del CV; el endpoint HTTP sigue existiendo, sin uso
-- [x] Reglas EPP por MQTT retained (`MqttRulesPublisher`) — reemplaza el webhook HTTP de HU04; `CvNotificationService`/`CvProperties` eliminados
+- [x] Arquitectura hexagonal adoptada — `domain/`, `application/` (services + ports), `infrastructure/` (web, persistence, webhook, notification, storage, config)
+- [x] Ingesta de incidentes/clips por HTTP directo (`IncidentController`, `POST /api/v1/cv/incidents(/clips)`) — reemplaza `POST /api/v1/incidents` como camino activo del CV; el endpoint legacy sigue existiendo, sin uso. Ambos flujos viven en el mismo controller (antes separados en `CvIngestController`, fusionado — mismo recurso REST `/incidents`, un controller por recurso, mismo criterio que Site/Zone/Camera)
+- [x] Reglas EPP por webhook HTTP (`HttpRulesPublisher`) — reemplaza el retained MQTT (que a su vez había reemplazado el webhook HTTP original de HU04); vuelve al mismo patrón de entrega pero con evidencia S3 y payload moderno
 - [x] Evidencia (foto+clip) en S3, subida por el CV — backend solo genera URLs prefirmadas (`EvidencePresignService`) para Telegram y el endpoint `GET /api/v1/incidents/{id}/evidence`
-- [x] `incidents.external_id` — correlaciona el mensaje MQTT de clip (llega después) con el incidente ya persistido
-- [ ] `infra/deploy.sh` / `infra/README.md` actualizados para el nuevo stack MQTT+S3 — pendiente, documentado como deuda
+- [x] `incidents.external_id` — correlaciona el aviso de clip (llega después) con el incidente ya persistido
+- [x] Obras/zonas/cámaras con `code` inmutable (autogenerado o validado contra duplicados) — identificador de negocio estable que el CV manda en cada evento
+- [ ] `infra/deploy.sh` / `infra/README.md` / `infra/cloudformation/safevision-stack-mqtt.yaml` actualizados para el stack HTTP (sin mosquitto) — pendiente, documentado como deuda

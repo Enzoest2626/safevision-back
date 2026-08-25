@@ -29,11 +29,9 @@ CREATE TABLE notification_statuses (
 -- DATOS MAESTROS
 -- ────────────────────────────────────────────────────────────
 
--- code: identificador estable para el enrutamiento MQTT
--- (safevision/{siteCode}/...) — se define solo al crear la obra
--- (autogenerado si no se especifica) y es inmutable despues: un update
--- que lo cambiaria rompería en silencio la comunicación con el CV, que
--- arma sus topics una sola vez al arrancar. Ver CLAUDE.md.
+-- code: identificador de negocio estable de la obra — se define solo al
+-- crear (autogenerado si no se especifica) y es inmutable despues: el CV
+-- lo usa para identificarse en cada evento que manda (ver CLAUDE.md).
 CREATE TABLE sites (
     id         BIGINT       PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     code       VARCHAR(50)  NOT NULL UNIQUE,
@@ -49,8 +47,7 @@ CREATE TABLE sites (
 -- Zonas dentro de una obra (ej. "Piso 2 - Construcción", "Almacén").
 -- Una obra tiene varias zonas; una zona puede agrupar varias cámaras.
 -- code: unico por obra (no global) — dos obras distintas pueden repetir
--- "Z1" sin chocar porque el topic MQTT ya las separa por siteCode
--- primero. Mismo criterio de inmutabilidad que sites.code.
+-- "Z1" sin chocar. Mismo criterio de inmutabilidad que sites.code.
 CREATE TABLE zones (
     id         BIGINT       PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     site_id    BIGINT       NOT NULL REFERENCES sites(id),
@@ -66,7 +63,7 @@ CREATE TABLE zones (
 );
 
 -- zone_id nulo = camara registrada pero sin enlazar todavia: el backend
--- no publica su config MQTT hasta que tenga site+zone+code completos
+-- no notifica su config al CV hasta que tenga site+zone+code completos
 -- (ver CameraService/CLAUDE.md). code: mismo criterio de inmutabilidad
 -- que sites.code/zones.code, ya global-unico desde antes de esta nota.
 CREATE TABLE cameras (
@@ -120,7 +117,7 @@ CREATE TABLE users (
 -- ────────────────────────────────────────────────────────────
 
 -- external_id: UUID generado por el modulo CV, correlaciona el incidente
--- con el mensaje de "clip listo" que llega minutos despues por MQTT.
+-- con el aviso de "clip listo" que llega minutos despues (POST separado).
 CREATE TABLE incidents (
     id          BIGINT       PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     worker_id   BIGINT       NOT NULL REFERENCES workers(id),
@@ -134,8 +131,8 @@ CREATE TABLE incidents (
 
 -- evidence_type: 'PHOTO' | 'VIDEO'.
 -- frame_b64: solo lo usa el flujo HTTP legacy (POST /api/v1/incidents).
--- storage_key/duration_seconds/file_size_bytes: solo el flujo MQTT/S3 (CV
--- sube foto y clip a S3, el backend solo referencia la key para presignar).
+-- storage_key/duration_seconds/file_size_bytes: solo el flujo nuevo del CV
+-- con evidencia en S3 (el backend solo referencia la key para presignar).
 CREATE TABLE evidence (
     id               BIGINT           PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     incident_id      BIGINT           NOT NULL REFERENCES incidents(id),

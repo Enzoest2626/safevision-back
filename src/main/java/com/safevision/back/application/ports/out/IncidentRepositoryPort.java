@@ -16,7 +16,7 @@ public interface IncidentRepositoryPort extends ReactiveCrudRepository<Incident,
 
     Flux<Incident> findByWorkerId(Long workerId);
 
-    /** Correlaciona el mensaje MQTT de "clip listo" con el incidente ya persistido. */
+    /** Correlaciona el aviso de "clip listo" con el incidente ya persistido. */
     Mono<Incident> findByExternalId(String externalId);
 
     @Query("""

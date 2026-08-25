@@ -24,8 +24,10 @@
 #     publica un incidente si logro subir la foto: sin estas variables
 #     configuradas, no se genera ningun incidente/alerta de punta a punta)
 #
-# El broker MQTT (mosquitto) es local y no necesita credenciales — CV y
-# backend se conectan solos via MQTT_BROKER_HOST=mosquitto.
+# Comunicación backend<->CV por HTTP directo (ver CLAUDE.md) — sin broker
+# de por medio. El backend expone POST /api/v1/cv/incidents(/clips) para
+# que el CV le mande eventos, y le pega al webhook HTTP del CV
+# (BACKEND_URL/CV_WEBHOOK_PORT) para reglas EPP y config de cámara.
 
 services:
 
@@ -47,17 +49,6 @@ services:
       timeout: 5s
       retries: 10
 
-  mosquitto:
-    image: eclipse-mosquitto:2
-    restart: unless-stopped
-    # Config minima inline: sin persistencia, permite conexiones anonimas
-    # (solo para desarrollo local, nunca asi en el stack de AWS real).
-    command: >
-      sh -c "printf 'listener 1883\nallow_anonymous true\n' > /mosquitto/config/mosquitto.conf
-      && /docker-entrypoint.sh /usr/sbin/mosquitto -c /mosquitto/config/mosquitto.conf"
-    ports:
-      - "1883:1883"
-
   backend:
     build:
       context: .
@@ -71,8 +62,7 @@ services:
       ALERT_SERVICE_TOKEN: ${ALERT_SERVICE_TOKEN:-dev-token}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
-      MQTT_BROKER_HOST: mosquitto
-      MQTT_BROKER_PORT: "1883"
+      CV_WEBHOOK_PORT: ${CV_WEBHOOK_PORT:-5001}
       S3_BUCKET: ${S3_BUCKET:-}
       AWS_REGION: ${AWS_REGION:-us-east-1}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
@@ -82,8 +72,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      mosquitto:
-        condition: service_started
 
   frontend:
     build:
@@ -111,14 +99,16 @@ services:
     # Igual que Restart=always en el systemd unit real (infra/cloudformation):
     # cuando el video termina y RTSP se desconecta de verdad (no un archivo
     # local, un stream real), el proceso termina — restart trae de vuelta
-    # el loop de deteccion, que reintenta conectar tanto a RTSP como al broker MQTT.
+    # el loop de deteccion, que reintenta conectar a RTSP.
     restart: unless-stopped
     environment:
       APP_ENV: ${APP_ENV:-dev}
       VIDEO_SOURCE: rtsp://mediamtx:8554/obra1
-      MQTT_BROKER_HOST: mosquitto
-      MQTT_BROKER_PORT: "1883"
-      SITE_ID: "1"
+      # BACKEND_URL/CV_WEBHOOK_PORT reemplazan las variables MQTT_BROKER_* de
+      # antes — se terminan de ajustar cuando se migre el módulo CV a HTTP
+      # (ver CLAUDE.md, "Backend <-> CV por HTTP").
+      BACKEND_URL: http://backend:8080
+      CV_WEBHOOK_PORT: ${CV_WEBHOOK_PORT:-5001}
       SITE_NAME: Obra-Principal
       CAMERA_ID: CAM-01
       COOLDOWN_SECONDS: "10"
@@ -128,9 +118,10 @@ services:
       AWS_REGION: ${AWS_REGION:-us-east-1}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+    ports:
+      - "5001:5001"
     depends_on:
       - mediamtx
-      - mosquitto
       - backend
 
   # Publica el video UNA sola vez (~36s, sin loop) al path /obra1 de MediaMTX

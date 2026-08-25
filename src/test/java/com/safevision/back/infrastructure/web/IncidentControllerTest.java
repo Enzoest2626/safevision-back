@@ -8,6 +8,8 @@ import static org.mockito.Mockito.when;
 
 import com.safevision.back.application.service.IncidentService;
 import com.safevision.back.infrastructure.web.dto.ApiEnvelope;
+import com.safevision.back.infrastructure.web.dto.CvClipReadyMessage;
+import com.safevision.back.infrastructure.web.dto.CvIncidentMessage;
 import com.safevision.back.infrastructure.web.dto.EvidenceResponse;
 import com.safevision.back.infrastructure.web.dto.IncidentRequest;
 import com.safevision.back.infrastructure.web.dto.IncidentResponse;
@@ -100,6 +102,72 @@ class IncidentControllerTest {
         System.out.println("       Respuesta HTTP     = 400 (validación @NotEmpty)");
         System.out.println("       service.register() = nunca invocado");
         System.out.println("[CP31] No se invoca registro ni Telegram => PASA");
+    }
+
+    // ── Ingesta activa del CV (POST /api/v1/cv/incidents(/clips)) ────────────
+
+    @Test
+    @DisplayName("POST /api/v1/cv/incidents con payload válido retorna 201")
+    void registerFromCv_retorna201() {
+        when(service.registerFromCv(any(CvIncidentMessage.class), any())).thenReturn(Mono.just(sampleResponse));
+
+        CvIncidentMessage message = new CvIncidentMessage("cv-uuid-1", 3, List.of("helmet", "vest"),
+                LocalDateTime.of(2026, 6, 24, 13, 30), "CAM-01", "Main-Site",
+                "incidents/2026-08-10/cv-uuid-1/photo.jpg");
+
+        client.post().uri("/api/v1/cv/incidents")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(message)
+                .exchange()
+                .expectStatus().isCreated()
+                .expectBody(new ParameterizedTypeReference<ApiEnvelope<IncidentResponse>>() {});
+    }
+
+    @Test
+    @DisplayName("POST /api/v1/cv/incidents con worker desconocido retorna 400")
+    void registerFromCv_workerDesconocido_retorna400() {
+        when(service.registerFromCv(any(CvIncidentMessage.class), any())).thenReturn(Mono.error(
+                new ResponseStatusException(HttpStatus.BAD_REQUEST, "Worker desconocido: 3")));
+
+        CvIncidentMessage message = new CvIncidentMessage("cv-uuid-1", 3, List.of("helmet"),
+                LocalDateTime.of(2026, 6, 24, 13, 30), "CAM-01", "Main-Site", "incidents/photo.jpg");
+
+        client.post().uri("/api/v1/cv/incidents")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(message)
+                .exchange()
+                .expectStatus().isBadRequest();
+    }
+
+    @Test
+    @DisplayName("POST /api/v1/cv/incidents/clips con payload válido retorna 200")
+    void registerClip_retorna200() {
+        when(service.registerClipReady(any(CvClipReadyMessage.class))).thenReturn(Mono.empty());
+
+        CvClipReadyMessage message = new CvClipReadyMessage("cv-uuid-1",
+                "incidents/2026-08-10/cv-uuid-1/clip.mp4", 10.0, 4831201L);
+
+        client.post().uri("/api/v1/cv/incidents/clips")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(message)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(new ParameterizedTypeReference<ApiEnvelope<Void>>() {});
+    }
+
+    @Test
+    @DisplayName("POST /api/v1/cv/incidents/clips con incidente desconocido retorna 500 (best-effort)")
+    void registerClip_incidenteDesconocido_propagaError() {
+        when(service.registerClipReady(any(CvClipReadyMessage.class))).thenReturn(Mono.error(
+                new IllegalArgumentException("Incidente desconocido para clip: external_id=cv-uuid-x")));
+
+        CvClipReadyMessage message = new CvClipReadyMessage("cv-uuid-x", "incidents/clip.mp4", 5.0, 100L);
+
+        client.post().uri("/api/v1/cv/incidents/clips")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(message)
+                .exchange()
+                .expectStatus().is5xxServerError();
     }
 
     @Test

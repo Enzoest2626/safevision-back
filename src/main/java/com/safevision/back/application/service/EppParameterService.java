@@ -4,8 +4,6 @@ import com.safevision.back.application.ports.out.EppParameterRepositoryPort;
 import com.safevision.back.application.ports.out.RulesPublisherPort;
 import com.safevision.back.application.ports.out.SiteEppConfigVersionRepositoryPort;
 import com.safevision.back.application.ports.out.SiteEppRequirementRepositoryPort;
-import com.safevision.back.application.ports.out.SiteRepositoryPort;
-import com.safevision.back.domain.model.Site;
 import com.safevision.back.domain.model.SiteEppRequirement;
 import com.safevision.back.infrastructure.web.dto.EppParameterRequest;
 import com.safevision.back.infrastructure.web.dto.EppParameterResponse;
@@ -24,19 +22,16 @@ public class EppParameterService {
     private final EppParameterRepositoryPort eppRepo;
     private final SiteEppRequirementRepositoryPort siteEppRepo;
     private final SiteEppConfigVersionRepositoryPort versionRepo;
-    private final RulesPublisherPort mqttRulesPublisher;
-    private final SiteRepositoryPort siteRepository;
+    private final RulesPublisherPort rulesPublisher;
 
     public EppParameterService(EppParameterRepositoryPort eppRepo,
                                SiteEppRequirementRepositoryPort siteEppRepo,
                                SiteEppConfigVersionRepositoryPort versionRepo,
-                               RulesPublisherPort mqttRulesPublisher,
-                               SiteRepositoryPort siteRepository) {
+                               RulesPublisherPort rulesPublisher) {
         this.eppRepo = eppRepo;
         this.siteEppRepo = siteEppRepo;
         this.versionRepo = versionRepo;
-        this.mqttRulesPublisher = mqttRulesPublisher;
-        this.siteRepository = siteRepository;
+        this.rulesPublisher = rulesPublisher;
     }
 
     /**
@@ -115,13 +110,8 @@ public class EppParameterService {
                                     .map(EppParameterResponse.EppItem::from)
                                     .toList()
                     ))
-                    .flatMap(response -> siteRepository.findById(siteId)
-                            .map(Site::code)
-                            .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND,
-                                    "Site not found")))
-                            .doOnNext(siteCode -> mqttRulesPublisher.publishRules(siteCode,
-                                    response.requiredEpp().stream().map(EppParameterResponse.EppItem::code).toList()))
-                            .thenReturn(response));
+                    .doOnSuccess(response -> rulesPublisher.publishRules(siteId,
+                            response.requiredEpp().stream().map(EppParameterResponse.EppItem::code).toList()));
         });
     }
 }

@@ -1,4 +1,4 @@
-package com.safevision.back.infrastructure.messaging.dto;
+package com.safevision.back.infrastructure.web.dto;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
@@ -6,10 +6,10 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * Mensaje MQTT publicado por el módulo CV en {@code safevision/{siteId}/incidents}
- * al confirmarse un incumplimiento — la foto ya está subida a S3, este mensaje
- * solo trae la referencia. Los nombres de campo respetan el contrato snake_case
- * ya acordado con el CV.
+ * Payload que el módulo CV envía por {@code POST /api/v1/cv/incidents} al
+ * confirmarse un incumplimiento — la foto ya está subida a S3, este mensaje
+ * solo trae la referencia. Los nombres de campo respetan el contrato
+ * snake_case ya acordado con el CV.
  */
 public record CvIncidentMessage(
         @JsonProperty("incident_id") String incidentId,

@@ -11,8 +11,8 @@ import com.safevision.back.domain.model.Evidence;
 import com.safevision.back.domain.model.Incident;
 import com.safevision.back.domain.model.Site;
 import com.safevision.back.domain.model.Worker;
-import com.safevision.back.infrastructure.messaging.dto.CvClipReadyMessage;
-import com.safevision.back.infrastructure.messaging.dto.CvIncidentMessage;
+import com.safevision.back.infrastructure.web.dto.CvClipReadyMessage;
+import com.safevision.back.infrastructure.web.dto.CvIncidentMessage;
 import com.safevision.back.infrastructure.web.dto.EvidenceResponse;
 import com.safevision.back.infrastructure.web.dto.IncidentRequest;
 import com.safevision.back.infrastructure.web.dto.IncidentResponse;
@@ -105,14 +105,14 @@ public class IncidentService {
     }
 
     /**
-     * Registra un incidente publicado por MQTT (ver MqttIncidentSubscriber) —
-     * misma resolución worker/cámara/obra que {@link #register}, pero la foto
-     * ya está en S3 (no llega inline) y el incidente queda correlacionado por
-     * {@code externalId} para que el clip de video (que llega después) lo
-     * pueda encontrar.
+     * Registra un incidente recibido por POST /api/v1/cv/incidents (ver
+     * IncidentController) — misma resolución worker/cámara/obra que
+     * {@link #register}, pero la foto ya está en S3 (no llega inline) y el
+     * incidente queda correlacionado por {@code externalId} para que el clip
+     * de video (que llega después) lo pueda encontrar.
      */
     public Mono<IncidentResponse> registerFromCv(CvIncidentMessage message, String traceId) {
-        log.info("Incidente recibido por MQTT | trace_id={} incident_id={} worker_code={} camera_code={} site={}",
+        log.info("Incidente recibido del CV | trace_id={} incident_id={} worker_code={} camera_code={} site={}",
                 traceId, message.incidentId(), message.workerCode(), message.cameraCode(), message.siteName());
 
         Mono<Worker> workerMono = workerRepo.findByCode(message.workerCode())
@@ -136,7 +136,7 @@ public class IncidentService {
                             message.timestamp(), now);
 
                     return incidentRepo.save(incident)
-                            .doOnNext(saved -> log.info("Incidente MQTT persistido | trace_id={} id={} external_id={}",
+                            .doOnNext(saved -> log.info("Incidente del CV persistido | trace_id={} id={} external_id={}",
                                     traceId, saved.id(), saved.externalId()))
                             .flatMap(saved -> evidenceRepo.save(new Evidence(null, saved.id(), "PHOTO",
                                             null, message.photoS3Key(), null, null, now))
@@ -147,9 +147,9 @@ public class IncidentService {
     }
 
     /**
-     * Registra el clip de video de un incidente ya notificado (mensaje MQTT
-     * separado, llega minutos después). No dispara una segunda notificación
-     * Telegram — la foto ya se envió, el clip es evidencia adicional.
+     * Registra el clip de video de un incidente ya notificado (POST separado,
+     * llega minutos después). No dispara una segunda notificación Telegram —
+     * la foto ya se envió, el clip es evidencia adicional.
      */
     public Mono<Void> registerClipReady(CvClipReadyMessage message) {
         return incidentRepo.findByExternalId(message.incidentId())

@@ -68,7 +68,7 @@ public class IncidentNotificationService {
     /**
      * Notifica un incidente a los contactos Telegram de la obra. La foto se
      * manda por URL prefirmada si {@code evidence} referencia S3
-     * ({@code storageKey}, flujo MQTT/CV nuevo), o por bytes inline si trae
+     * ({@code storageKey}, flujo CV nuevo), o por bytes inline si trae
      * {@code frameB64} (flujo HTTP legacy, sin cambios de comportamiento).
      */
     public Mono<Void> notify(Incident incident, Camera camera, Site site, Evidence evidence, String traceId) {

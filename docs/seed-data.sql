@@ -47,10 +47,10 @@ ON CONFLICT (username) DO NOTHING;
 
 -- ────────────────────────────────────────────────────────────
 -- OBRA DEMO
--- code (no name/id) es lo que arma los topics MQTT — deben coincidir
--- con SITE_CODE/CAMERA_ID del .env del modulo CV (ver .env.example:
--- SITE_CODE=OBRA-PRINCIPAL, CAMERA_ID=CAM-01). Ya no depende de que la
--- BD este vacia (antes SITE_ID=1 asumia el primer id autogenerado).
+-- name/code deben coincidir con SITE_NAME/CAMERA_ID del .env del modulo CV
+-- (ver .env.example: SITE_NAME=Obra-Principal, CAMERA_ID=CAM-01) — el CV
+-- los manda en cada evento HTTP para que el backend resuelva a que
+-- obra/camara corresponde.
 -- ────────────────────────────────────────────────────────────
 
 INSERT INTO sites (code, name, location) VALUES

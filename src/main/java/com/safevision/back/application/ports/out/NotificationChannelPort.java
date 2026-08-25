@@ -8,7 +8,7 @@ import reactor.core.publisher.Mono;
 /**
  * Puerto driven: envía la alerta de un incidente EPP por el canal que sea
  * (hoy Telegram). Dos formas de entregar la foto: bytes inline (flujo HTTP
- * legacy) o URL prefirmada de S3 (flujo MQTT/CV nuevo).
+ * legacy) o URL prefirmada de S3 (flujo CV nuevo, evidencia en S3).
  */
 public interface NotificationChannelPort {
 

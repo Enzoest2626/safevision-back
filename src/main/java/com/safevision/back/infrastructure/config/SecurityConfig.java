@@ -60,8 +60,10 @@ public class SecurityConfig {
     }
 
     /**
-     * Valida el Bearer token estático para el endpoint de registro de incidentes.
-     * Solo aplica a POST /api/v1/incidents (llamado exclusivamente por el módulo CV).
+     * Valida el Bearer token estático para los endpoints de ingesta de
+     * incidentes. Aplica a POST /api/v1/incidents (legacy) y a
+     * POST /api/v1/cv/** (incidentes/clips por HTTP, reemplaza MQTT) —
+     * llamados exclusivamente por el módulo CV.
      */
     private WebFilter alertTokenFilter() {
         return (ServerWebExchange exchange, WebFilterChain chain) -> {
@@ -107,8 +109,11 @@ public class SecurityConfig {
     }
 
     private boolean isIncidentIngestEndpoint(ServerWebExchange exchange) {
-        return exchange.getRequest().getMethod() == HttpMethod.POST
-                && exchange.getRequest().getPath().value().equals("/api/v1/incidents");
+        if (exchange.getRequest().getMethod() != HttpMethod.POST) {
+            return false;
+        }
+        String path = exchange.getRequest().getPath().value();
+        return path.equals("/api/v1/incidents") || path.startsWith("/api/v1/cv/");
     }
 
     private boolean isPublicPath(ServerWebExchange exchange) {

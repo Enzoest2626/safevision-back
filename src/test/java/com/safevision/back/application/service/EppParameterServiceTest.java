@@ -3,7 +3,6 @@ package com.safevision.back.application.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
@@ -11,9 +10,7 @@ import com.safevision.back.application.ports.out.EppParameterRepositoryPort;
 import com.safevision.back.application.ports.out.RulesPublisherPort;
 import com.safevision.back.application.ports.out.SiteEppConfigVersionRepositoryPort;
 import com.safevision.back.application.ports.out.SiteEppRequirementRepositoryPort;
-import com.safevision.back.application.ports.out.SiteRepositoryPort;
 import com.safevision.back.domain.model.EppParameter;
-import com.safevision.back.domain.model.Site;
 import com.safevision.back.domain.model.SiteEppConfigVersion;
 import com.safevision.back.domain.model.SiteEppRequirement;
 import com.safevision.back.infrastructure.web.dto.EppParameterRequest;
@@ -55,27 +52,19 @@ class EppParameterServiceTest {
     private SiteEppConfigVersionRepositoryPort versionRepo;
 
     @Mock
-    private RulesPublisherPort mqttRulesPublisher;
-
-    @Mock
-    private SiteRepositoryPort siteRepository;
+    private RulesPublisherPort rulesPublisher;
 
     private EppParameterService service;
 
     private static final Long SITE_ID = 1L;
-    private static final String SITE_CODE = "OBRA-1";
 
     private final EppParameter casco   = epp(1L, "casco",   "Casco de seguridad");
     private final EppParameter chaleco = epp(2L, "chaleco", "Chaleco reflectivo");
     private final EppParameter guantes = epp(3L, "guantes", "Guantes de protección");
 
-    private final Site site = new Site(SITE_ID, SITE_CODE, "Main-Site", "Lima", true,
-            LocalDateTime.now(), "system", LocalDateTime.now(), "system");
-
     @BeforeEach
     void setUp() {
-        service = new EppParameterService(eppRepo, siteEppRepo, versionRepo, mqttRulesPublisher, siteRepository);
-        lenient().when(siteRepository.findById(SITE_ID)).thenReturn(Mono.just(site));
+        service = new EppParameterService(eppRepo, siteEppRepo, versionRepo, rulesPublisher);
     }
 
     private static EppParameter epp(Long id, String code, String name) {
@@ -122,7 +111,7 @@ class EppParameterServiceTest {
 
         verify(siteEppRepo).deleteAllBySiteId(SITE_ID);
         verify(siteEppRepo, times(2)).save(any(SiteEppRequirement.class));
-        verify(mqttRulesPublisher).publishRules(eq(SITE_CODE), argThat(codes ->
+        verify(rulesPublisher).publishRules(eq(SITE_ID), argThat(codes ->
                 codes.containsAll(List.of("casco", "chaleco"))));
     }
 
@@ -186,7 +175,7 @@ class EppParameterServiceTest {
 
         verify(siteEppRepo, never()).deleteAllBySiteId(anyLong());
         verify(siteEppRepo, never()).save(any());
-        verify(mqttRulesPublisher, never()).publishRules(anyString(), any());
+        verify(rulesPublisher, never()).publishRules(anyLong(), any());
     }
 
     @Test
@@ -204,7 +193,7 @@ class EppParameterServiceTest {
                 .verify();
 
         verify(siteEppRepo, never()).deleteAllBySiteId(anyLong());
-        verify(mqttRulesPublisher, never()).publishRules(anyString(), any());
+        verify(rulesPublisher, never()).publishRules(anyLong(), any());
     }
 
     // ── CP18: Edición concurrente sobre la misma obra (optimistic locking) ────

@@ -74,9 +74,12 @@ src/main/java/com/safevision/back/
 │   │                            EvidenceStoragePort, RulesPublisherPort
 │   └── service/             ← Lógica de negocio (Reactor puro), depende solo de puertos
 └── infrastructure/
-    ├── web/                  ← Controllers + dto/ (Request/Response)
+    ├── web/                  ← Controllers + dto/ (Request/Response) — IncidentController
+    │                            tambien maneja POST /api/v1/cv/incidents(/clips), un solo
+    │                            controller por recurso (incidents), no uno separado por caller
     ├── persistence/          ← 15 repos Spring Data `extends XRepositoryPort {}`
-    ├── messaging/             ← MqttClientConfig, MqttIncidentSubscriber, MqttRulesPublisher
+    ├── webhook/               ← HttpRulesPublisher, HttpCameraConfigPublisher — notifican
+    │                            al CV por HTTP directo (camera.ipAddress), sin broker
     ├── notification/          ← TelegramNotificationService
     ├── storage/               ← EvidencePresignService (S3 URLs prefirmadas)
     └── config/                 ← OpenApiConfig, SecurityConfig, *Properties
@@ -121,19 +124,26 @@ GET/PUT/DELETE  /api/v1/users/{id}
 ### Incidentes EPP (HU10)
 
 ```
-POST  /api/v1/incidents          ← legacy HTTP, sin uso activo del CV (ahora publica por MQTT)
+POST  /api/v1/cv/incidents        ← activo, evidencia en S3 (photo_s3_key)
+POST  /api/v1/cv/incidents/clips  ← activo, aviso de clip listo (minutos despues)
+POST  /api/v1/incidents          ← legacy HTTP, sin uso activo (frame_b64 inline, sin S3)
 GET   /api/v1/incidents          ← filtros opcionales: siteId, workerId, from, to
 GET   /api/v1/incidents/{id}
 GET   /api/v1/incidents/{id}/evidence   ← foto/clip con URL de S3 prefirmada
 ```
 
-### Ingesta activa (MQTT, reemplaza HTTP)
+### Notificacion activa backend->CV (webhook HTTP, sin broker)
 
 ```
-CV → Backend  MQTT safevision/{siteId}/incidents         ← incidente + foto ya en S3
-CV → Backend  MQTT safevision/{siteId}/incidents/clips    ← clip listo (minutos despues)
-Backend → CV  MQTT safevision/{siteId}/rules (retained)   ← reglas EPP, reemplaza polling HTTP
+CV → Backend  POST /api/v1/cv/incidents          ← incidente + foto ya en S3
+CV → Backend  POST /api/v1/cv/incidents/clips     ← clip listo (minutos despues)
+Backend → CV  POST http://{camera.ip}:{CV_WEBHOOK_PORT}/webhook/rules    ← reglas EPP, best-effort
+Backend → CV  POST http://{camera.ip}:{CV_WEBHOOK_PORT}/webhook/config   ← rtsp_url/active, best-effort
 ```
+
+Nota historica: este flujo paso por MQTT (broker `eclipse-mosquitto`) entre
+2026-08 y esta version — se revirtio a HTTP directo para no depender de un
+servidor de broker adicional (tag git `mqtt-pre-https-mosquitto2`).
 
 ### Parámetros EPP (HU04)
 
@@ -180,10 +190,12 @@ services no se tocaron. DELETE pasó de 204 a 200 (204 no puede llevar body).
 POST  /api/v1/auth/login   ← PÚBLICO. {username, password} -> {token, tokenType, expiresInSeconds, username, role}
 ```
 
-Todo endpoint salvo `/api/v1/auth/**`, swagger y el `POST /api/v1/incidents`
-legacy exige `Authorization: Bearer <jwt>` (`SecurityConfig.jwtAuthFilter`,
-`JwtService`). JWT stateless — sin refresh ni logout server-side. El claim
-`role` viaja en el token pero todavía no se usa para autorización por rol.
+Todo endpoint salvo `/api/v1/auth/**`, swagger, `POST /api/v1/incidents`
+legacy y `POST /api/v1/cv/**` exige `Authorization: Bearer <jwt>`
+(`SecurityConfig.jwtAuthFilter`, `JwtService`) — los últimos dos usan el
+mismo Bearer estático (`ALERT_SERVICE_TOKEN`) que valida el CV. JWT
+stateless — sin refresh ni logout server-side. El claim `role` viaja en el
+token pero todavía no se usa para autorización por rol.
 
 ### Documentación
 
@@ -201,7 +213,21 @@ GET   /v3/api-docs
 
 ---
 
-### Payload POST /api/v1/incidents
+### Payload POST /api/v1/cv/incidents (activo)
+
+```json
+{
+  "incident_id": "uuid-generado-por-cv",
+  "worker_code": 3,
+  "missing_epp": ["helmet", "vest"],
+  "timestamp": "2026-06-24T13:30:00",
+  "camera_code": "CAM-01",
+  "site_name": "Main-Site",
+  "photo_s3_key": "incidents/2026-08-10/uuid-generado-por-cv/photo.jpg"
+}
+```
+
+### Payload POST /api/v1/incidents (legacy, sin uso activo)
 
 ```json
 {
@@ -231,12 +257,15 @@ Ver `docs/init-schema.sql` y CLAUDE.md para el DDL completo.
 ## Flujo de Incidente
 
 ```
-CV → POST /api/v1/incidents (Bearer ALERT_SERVICE_TOKEN)
+CV → POST /api/v1/cv/incidents (Bearer ALERT_SERVICE_TOKEN)
   → resuelve worker_code/camera_code/site_name → IDs
-  → persiste incidents + evidence
+  → persiste incidents + evidence (storage_key = photo_s3_key)
   → resuelve contactos de la obra (site_contacts, fallback env var)
   → TelegramNotificationService (por cada contacto)
   → persiste notifications (SENT/FAILED)
+
+CV → POST /api/v1/cv/incidents/clips (minutos despues)
+  → busca incidente por external_id, persiste evidence VIDEO — no notifica de nuevo
 
 Nota histórica: Hikvision ISAPI (sirena, HU09) se evaluó y se descartó del
 alcance — nunca tuvo cliente HTTP real. El guardado de clips de video en S3
@@ -256,10 +285,7 @@ TELEGRAM_CHAT_ID=
 ALERT_SERVICE_TOKEN=
 JWT_SECRET=
 JWT_EXPIRATION_MINUTES=480
-MQTT_BROKER_HOST=
-MQTT_BROKER_PORT=1883
-MQTT_USERNAME=
-MQTT_PASSWORD=
+CV_WEBHOOK_PORT=5001
 S3_BUCKET=
 AWS_REGION=us-east-1
 S3_PRESIGN_TTL_MINUTES=15
@@ -273,7 +299,7 @@ SERVER_PORT=8080
 - Java 21: records, sealed classes, pattern matching.
 - Nombres en inglés (código y BD), comentarios en español.
 - Reactive first — cero `.block()`.
-- Cobertura tests >= 70% — verificado 2026-08-16: 162 tests, 0 fallos, 1 omitido (JaCoCo).
+- Cobertura tests >= 70% — verificado post-migración HTTP: 172 tests, 0 fallos, 1 omitido (JaCoCo).
 - `application/service/*` depende de interfaces (`application/ports/out/`), nunca de una clase concreta de `infrastructure/`.
 - Testcontainers en `pom.xml` pero sin tests de integración que lo usen todavía.
 - Endpoints documentados con `@Operation` / `@ApiResponse`.
@@ -288,22 +314,25 @@ feat(sites): implementa CRUD de obras
 
 ## Estado Actual (resumen — ver CLAUDE.md para el checklist completo)
 
-Implementado: CRUD de Sites/Zones/Cameras/Workers/Users/SiteContacts,
+Implementado: CRUD de Sites/Zones/Cameras/Workers/Users/SiteContacts (con
+`code` inmutable, autogenerado o validado contra duplicados),
 arquitectura hexagonal completa (domain/application/infrastructure),
-ingesta de incidentes/clips por MQTT (`MqttIncidentSubscriber`, reemplaza
-el POST HTTP como camino activo), reglas EPP por MQTT retained
-(`MqttRulesPublisher`, reemplaza el webhook HU04), evidencia (foto+clip) en
-S3 con URLs prefirmadas (`EvidencePresignService`), endpoint
+ingesta de incidentes/clips por HTTP directo (`IncidentController`,
+`POST /api/v1/cv/incidents(/clips)`, reemplaza el POST legacy como camino
+activo — mismo controller que el resto del recurso `/incidents`, no uno
+separado por caller), reglas EPP y config de cámara por webhook HTTP best-effort
+(`HttpRulesPublisher`/`HttpCameraConfigPublisher`, sin broker), evidencia
+(foto+clip) en S3 con URLs prefirmadas (`EvidencePresignService`), endpoint
 `GET /api/v1/incidents/{id}/evidence`, notificación Telegram vía URL
 prefirmada o bytes inline, login JWT (`POST /api/v1/auth/login`, público) con
 el resto de endpoints protegidos por `Authorization: Bearer <jwt>`, todas las
 respuestas envueltas en `ApiEnvelope<T>` (DELETE ahora 200, no 204),
 reportes agregados (`GET /api/v1/reports`, HU12, sin "% de cumplimiento" —
-ver arriba), Swagger, 162 tests unitarios, infraestructura AWS como código
-(dos stacks CloudFormation: el original HTTP y el nuevo
-`safevision-stack-mqtt.yaml`).
+ver arriba), Swagger, 172 tests unitarios, infraestructura AWS como código
+(dos stacks CloudFormation: el original HTTP y `safevision-stack-mqtt.yaml`,
+que sigue aprovisionando un mosquitto que ya no hace falta — deuda pendiente).
 
 Pendiente: endpoint de notificaciones (lectura del historial), tests de
 integración con Testcontainers, autorización por rol (el claim `role` del
-JWT no se valida todavía en ningún endpoint), `infra/deploy.sh`/`README.md`
-actualizados para el nuevo stack MQTT+S3.
+JWT no se valida todavía en ningún endpoint), `infra/deploy.sh`/`README.md`/
+`safevision-stack-mqtt.yaml` actualizados para el stack HTTP sin broker.

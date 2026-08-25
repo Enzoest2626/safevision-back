@@ -2,11 +2,7 @@ package com.safevision.back.application.service;
 
 import com.safevision.back.application.ports.out.CameraConfigPublisherPort;
 import com.safevision.back.application.ports.out.CameraRepositoryPort;
-import com.safevision.back.application.ports.out.SiteRepositoryPort;
-import com.safevision.back.application.ports.out.ZoneRepositoryPort;
 import com.safevision.back.domain.model.Camera;
-import com.safevision.back.domain.model.Site;
-import com.safevision.back.domain.model.Zone;
 import com.safevision.back.infrastructure.web.dto.CameraRequest;
 import com.safevision.back.infrastructure.web.dto.CameraResponse;
 import org.slf4j.Logger;
@@ -25,34 +21,24 @@ public class CameraService {
     private static final Logger log = LoggerFactory.getLogger(CameraService.class);
 
     private final CameraRepositoryPort cameraRepository;
-    private final SiteRepositoryPort siteRepository;
-    private final ZoneRepositoryPort zoneRepository;
     private final CameraConfigPublisherPort cameraConfigPublisher;
 
-    public CameraService(CameraRepositoryPort cameraRepository, SiteRepositoryPort siteRepository,
-                          ZoneRepositoryPort zoneRepository, CameraConfigPublisherPort cameraConfigPublisher) {
+    public CameraService(CameraRepositoryPort cameraRepository, CameraConfigPublisherPort cameraConfigPublisher) {
         this.cameraRepository = cameraRepository;
-        this.siteRepository = siteRepository;
-        this.zoneRepository = zoneRepository;
         this.cameraConfigPublisher = cameraConfigPublisher;
     }
 
     /**
-     * No publica nada hasta que la cámara tenga obra+zona+código completos
-     * (zoneId nulo = registrada pero sin enlazar todavía, ver CLAUDE.md) —
-     * el topic MQTT necesita los 3 códigos para armarse.
+     * No notifica nada hasta que la cámara tenga zona asignada (zoneId nulo =
+     * registrada pero sin enlazar todavía, ver CLAUDE.md) — el admin tiene
+     * que completar site+zone+code antes de habilitar la conexión real.
      */
-    private Mono<Void> publishConfig(Camera camera) {
+    private void publishConfig(Camera camera) {
         if (camera.zoneId() == null) {
-            log.info("Cámara {} sin zona asignada — no se publica config MQTT todavía", camera.code());
-            return Mono.empty();
+            log.info("Cámara {} sin zona asignada — no se notifica su config todavía", camera.code());
+            return;
         }
-        return Mono.zip(
-                        siteRepository.findById(camera.siteId()).map(Site::code),
-                        zoneRepository.findById(camera.zoneId()).map(Zone::code))
-                .doOnNext(codes -> cameraConfigPublisher.publishCameraConfig(
-                        codes.getT1(), codes.getT2(), camera.code(), camera.rtspUrl(), camera.active()))
-                .then();
+        cameraConfigPublisher.publishCameraConfig(camera);
     }
 
     public Flux<CameraResponse> findAll() {
@@ -74,7 +60,7 @@ public class CameraService {
                             request.ipAddress(), request.rtspUrl(), true, now, createdBy, now, createdBy);
                     return cameraRepository.save(camera);
                 })
-                .flatMap(saved -> publishConfig(saved).thenReturn(saved))
+                .doOnNext(this::publishConfig)
                 .map(CameraResponse::from);
     }
 
@@ -91,7 +77,7 @@ public class CameraService {
                     );
                     return cameraRepository.save(updated);
                 })
-                .flatMap(saved -> publishConfig(saved).thenReturn(saved))
+                .doOnNext(this::publishConfig)
                 .map(CameraResponse::from);
     }
 
@@ -108,7 +94,8 @@ public class CameraService {
                     );
                     return cameraRepository.save(deactivated);
                 })
-                .flatMap(this::publishConfig);
+                .doOnNext(this::publishConfig)
+                .then();
     }
 
     /**
