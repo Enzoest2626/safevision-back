@@ -40,7 +40,15 @@ class SiteControllerTest {
 
     @BeforeEach
     void setUp() {
-        client = WebTestClient.bindToController(new SiteController(service)).build();
+        // El filtro JWT real deja el username como atributo del exchange (ver
+        // SecurityConfig) — bindToController no pasa por ese filtro, así que
+        // se simula acá para que @RequestAttribute("username") resuelva.
+        client = WebTestClient.bindToController(new SiteController(service))
+                .webFilter((exchange, chain) -> {
+                    exchange.getAttributes().put("username", "supervisor1");
+                    return chain.filter(exchange);
+                })
+                .build();
         sampleResponse = new SiteResponse(1L, "OBRA-1", "Main-Site", "Lima", true,
                 LocalDateTime.now(), "system", LocalDateTime.now(), "system");
     }
@@ -50,7 +58,7 @@ class SiteControllerTest {
     void findAll_retorna200() {
         when(service.findAll()).thenReturn(Flux.just(sampleResponse));
 
-        client.get().uri("/api/v1/sites")
+        client.get().uri("/sites")
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody(new ParameterizedTypeReference<ApiEnvelope<List<SiteResponse>>>() {})
@@ -65,7 +73,7 @@ class SiteControllerTest {
     void findById_existente_retorna200() {
         when(service.findById(1L)).thenReturn(Mono.just(sampleResponse));
 
-        client.get().uri("/api/v1/sites/{id}", 1L)
+        client.get().uri("/sites/{id}", 1L)
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody(new ParameterizedTypeReference<ApiEnvelope<SiteResponse>>() {});
@@ -77,7 +85,7 @@ class SiteControllerTest {
         when(service.findById(99L)).thenReturn(Mono.error(
                 new ResponseStatusException(HttpStatus.NOT_FOUND, "Site not found")));
 
-        client.get().uri("/api/v1/sites/{id}", 99L)
+        client.get().uri("/sites/{id}", 99L)
                 .exchange()
                 .expectStatus().isNotFound();
     }
@@ -87,8 +95,7 @@ class SiteControllerTest {
     void create_retorna201() {
         when(service.create(any(SiteRequest.class), anyString())).thenReturn(Mono.just(sampleResponse));
 
-        client.post().uri("/api/v1/sites")
-                .header("X-Username", "supervisor1")
+        client.post().uri("/sites")
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(new SiteRequest("OBRA-1", "Main-Site", "Lima"))
                 .exchange()
@@ -100,8 +107,7 @@ class SiteControllerTest {
     void update_retorna200() {
         when(service.update(anyLong(), any(SiteRequest.class), anyString())).thenReturn(Mono.just(sampleResponse));
 
-        client.put().uri("/api/v1/sites/{id}", 1L)
-                .header("X-Username", "supervisor1")
+        client.put().uri("/sites/{id}", 1L)
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(new SiteRequest("OBRA-1", "Main-Site", "Lima"))
                 .exchange()
@@ -113,8 +119,7 @@ class SiteControllerTest {
     void delete_retorna200() {
         when(service.delete(anyLong(), anyString())).thenReturn(Mono.empty());
 
-        client.delete().uri("/api/v1/sites/{id}", 1L)
-                .header("X-Username", "supervisor1")
+        client.delete().uri("/sites/{id}", 1L)
                 .exchange()
                 .expectStatus().isOk();
     }

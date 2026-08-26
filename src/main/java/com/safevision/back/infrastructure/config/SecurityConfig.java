@@ -85,6 +85,10 @@ public class SecurityConfig {
      * de endpoints. Rutas públicas ({@link #PUBLIC_PATH_PREFIXES}) y el endpoint
      * de ingesta de incidentes (que usa su propio token estático, ver
      * {@link #alertTokenFilter()}) quedan afuera de esta validación.
+     *
+     * Deja el username del token (su subject) como atributo del exchange —
+     * los controllers lo leen con {@code @RequestAttribute("username")} en vez
+     * de confiar en un header que cualquiera podría mandar con otro valor.
      */
     private WebFilter jwtAuthFilter() {
         return (ServerWebExchange exchange, WebFilterChain chain) -> {
@@ -99,6 +103,7 @@ public class SecurityConfig {
                 exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
                 return exchange.getResponse().setComplete();
             }
+            exchange.getAttributes().put("username", jwtService.extractUsername(token));
             return chain.filter(exchange);
         };
     }

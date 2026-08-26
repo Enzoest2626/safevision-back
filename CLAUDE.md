@@ -123,16 +123,18 @@ src/main/java/com/safevision/back/
 │       ├── SiteService, CameraService, WorkerService, UserService
 │       ├── ZoneService, SiteContactService, EppParameterService
 │       ├── IncidentNotificationService  ← resuelve contactos + notifica + registra en `notifications`
-│       └── IncidentService              ← orquesta: persiste incidente+evidencia,
-│                                            registerFromCv/registerClipReady (flujo HTTP del CV)
+│       ├── IncidentService              ← ingesta: persiste incidente+evidencia,
+│       │                                    register/registerFromCv/registerClipReady
+│       └── IncidentQueryService         ← consulta: findByFilter/findById/findEvidenceByIncidentId
+│                                            (separado de IncidentService por el límite de 150 líneas)
 └── infrastructure/
     ├── web/                 ← Controllers (driving) + dto/ (Request/Response)
     │   ├── SiteController, ZoneController, SiteContactController
     │   ├── CameraController, WorkerController, UserController
-    │   ├── IncidentController        ← HU10 HTTP legacy (frame_b64 inline) + GET .../evidence
+    │   ├── IncidentController        ← HTTP legacy (frame_b64 inline) + GET .../evidence
     │   │                                + POST /api/v1/cv/incidents(/clips) (flujo activo, dto/
     │   │                                CvIncidentMessage, CvClipReadyMessage)
-    │   └── EppParameterController    ← HU04
+    │   └── EppParameterController
     ├── persistence/         ← 15 repos Spring Data, cada uno
     │                            `extends XRepositoryPort {}` (implementación via proxy)
     ├── webhook/              ← HttpRulesPublisher, HttpCameraConfigPublisher (implementan
@@ -195,6 +197,13 @@ va envuelta en el mismo sobre — estándar acordado con el frontend:
 ---
 
 ## API Endpoints
+
+El prefijo `/api/v1` no se repite en cada `@RequestMapping` — es
+`spring.webflux.base-path` (`application.yml`), una sola vez para toda la
+app. Las URLs reales (las de esta tabla) no cambian; los `@RequestMapping`
+de cada controller sí quedan sin el prefijo (`@RequestMapping("/sites")`,
+no `"/api/v1/sites"`). `SecurityConfig` no se tocó: los `WebFilter` ven el
+path completo igual, `base-path` solo afecta el matching de `@RequestMapping`.
 
 ### Gestión de Datos Maestros
 
@@ -295,6 +304,15 @@ exige `Authorization: Bearer <jwt>` — validado por un `WebFilter`
 (`infrastructure/security/`) genera y valida el token; no hay endpoint de
 refresh ni logout server-side (JWT stateless — el frontend simplemente
 descarta el token).
+
+**Username del actor autenticado — atributo del exchange, no header.**
+`jwtAuthFilter` extrae el `subject` del JWT ya validado
+(`JwtService.extractUsername`) y lo deja en `exchange.getAttributes()`; los
+controllers que necesitan quién hizo el cambio (`createdBy`/`updatedBy`) lo
+leen con `@RequestAttribute("username")`. Antes viajaba en un header
+`X-Username` que el cliente mandaba por su cuenta — sin relación con el JWT,
+así que cualquiera podía mandar un valor distinto al usuario real. Ya no
+existe ese header.
 
 **Bootstrap:** como `POST /api/v1/users` ahora también exige JWT, sin un
 usuario semilla nadie podría loguearse nunca. `docs/seed-data.sql` inserta
@@ -799,7 +817,7 @@ feat(setup): inicializa proyecto con dependencias y configuración base
       agregación real con `DatabaseClient` (sin "% de cumplimiento", ver
       sección de arriba)
 - [x] Servicio Telegram Bot (`TelegramNotificationService`) — notifica a los contactos de la obra
-- [x] Notificación de incidentes extraída a `IncidentNotificationService` — mantiene `IncidentService` bajo el límite de 150 líneas
+- [x] Notificación de incidentes extraída a `IncidentNotificationService` y consultas a `IncidentQueryService` — mantiene `IncidentService` (ingesta) bajo el límite de 150 líneas
 - [x] Swagger/OpenAPI configurado (`OpenApiConfig`)
 - [x] Seguridad Bearer estática — protege `POST /api/v1/incidents` (`ALERT_SERVICE_TOKEN`, módulo CV)
 - [x] Login JWT (`POST /api/v1/auth/login`, público) — `AuthService`/`AuthController`/`JwtService`; el resto de endpoints exige `Authorization: Bearer <jwt>` vía `SecurityConfig.jwtAuthFilter` (2026-08-15)

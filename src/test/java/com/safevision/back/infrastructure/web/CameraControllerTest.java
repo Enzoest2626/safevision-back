@@ -39,7 +39,12 @@ class CameraControllerTest {
 
     @BeforeEach
     void setUp() {
-        client = WebTestClient.bindToController(new CameraController(service)).build();
+        client = WebTestClient.bindToController(new CameraController(service))
+                .webFilter((exchange, chain) -> {
+                    exchange.getAttributes().put("username", "supervisor1");
+                    return chain.filter(exchange);
+                })
+                .build();
         sampleResponse = new CameraResponse(1L, 10L, null, "CAM-01", "Entrada", "10.0.0.5", null,
                 true, LocalDateTime.now(), "system", LocalDateTime.now(), "system");
     }
@@ -49,7 +54,7 @@ class CameraControllerTest {
     void findAll_retorna200() {
         when(service.findAll()).thenReturn(Flux.just(sampleResponse));
 
-        client.get().uri("/api/v1/cameras")
+        client.get().uri("/cameras")
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody(new ParameterizedTypeReference<ApiEnvelope<List<CameraResponse>>>() {})
@@ -61,7 +66,7 @@ class CameraControllerTest {
     void findById_existente_retorna200() {
         when(service.findById(1L)).thenReturn(Mono.just(sampleResponse));
 
-        client.get().uri("/api/v1/cameras/{id}", 1L)
+        client.get().uri("/cameras/{id}", 1L)
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody(new ParameterizedTypeReference<ApiEnvelope<CameraResponse>>() {});
@@ -73,7 +78,7 @@ class CameraControllerTest {
         when(service.findById(99L)).thenReturn(Mono.error(
                 new ResponseStatusException(HttpStatus.NOT_FOUND, "Camera not found")));
 
-        client.get().uri("/api/v1/cameras/{id}", 99L)
+        client.get().uri("/cameras/{id}", 99L)
                 .exchange()
                 .expectStatus().isNotFound();
     }
@@ -83,8 +88,7 @@ class CameraControllerTest {
     void create_retorna201() {
         when(service.create(any(CameraRequest.class), anyString())).thenReturn(Mono.just(sampleResponse));
 
-        client.post().uri("/api/v1/cameras")
-                .header("X-Username", "supervisor1")
+        client.post().uri("/cameras")
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
                 .bodyValue(new CameraRequest(10L, null, "CAM-01", "Entrada", "10.0.0.5", null))
                 .exchange()
@@ -96,8 +100,7 @@ class CameraControllerTest {
     void update_retorna200() {
         when(service.update(anyLong(), any(CameraRequest.class), anyString())).thenReturn(Mono.just(sampleResponse));
 
-        client.put().uri("/api/v1/cameras/{id}", 1L)
-                .header("X-Username", "supervisor1")
+        client.put().uri("/cameras/{id}", 1L)
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
                 .bodyValue(new CameraRequest(10L, null, "CAM-01", "Entrada", "10.0.0.5", null))
                 .exchange()
@@ -109,8 +112,7 @@ class CameraControllerTest {
     void delete_retorna200() {
         when(service.delete(anyLong(), anyString())).thenReturn(Mono.empty());
 
-        client.delete().uri("/api/v1/cameras/{id}", 1L)
-                .header("X-Username", "supervisor1")
+        client.delete().uri("/cameras/{id}", 1L)
                 .exchange()
                 .expectStatus().isOk();
     }

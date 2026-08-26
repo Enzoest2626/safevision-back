@@ -17,7 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
 
 @RestController
-@RequestMapping("/api/v1/auth")
+@RequestMapping("/auth")
 @Tag(name = "Auth", description = "Autenticación de usuarios del frontend")
 public class AuthController {
 
@@ -29,9 +29,8 @@ public class AuthController {
 
     @PostMapping("/login")
     @SecurityRequirements
-    @Operation(summary = "Login — endpoint público, retorna un JWT")
+    @Operation(summary = "Login")
     @ApiResponse(responseCode = "200", description = "Login correcto, retorna token")
-    @ApiResponse(responseCode = "401", description = "Usuario o contraseña incorrectos")
     public Mono<ApiEnvelope<LoginResponse>> login(@Valid @RequestBody LoginRequest request) {
         return ApiEnvelope.wrap(authService.login(request), HttpStatus.OK);
     }

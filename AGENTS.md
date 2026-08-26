@@ -195,7 +195,14 @@ legacy y `POST /api/v1/cv/**` exige `Authorization: Bearer <jwt>`
 (`SecurityConfig.jwtAuthFilter`, `JwtService`) — los últimos dos usan el
 mismo Bearer estático (`ALERT_SERVICE_TOKEN`) que valida el CV. JWT
 stateless — sin refresh ni logout server-side. El claim `role` viaja en el
-token pero todavía no se usa para autorización por rol.
+token pero todavía no se usa para autorización por rol. El filtro deja el
+username (subject del JWT) en `exchange.getAttributes()` —
+`@RequestAttribute("username")` en vez del header `X-Username` de antes
+(ese header no tenía relación real con el JWT, cualquiera podía mandar
+cualquier valor).
+
+`/api/v1` es `spring.webflux.base-path` (una vez, en `application.yml`) —
+los `@RequestMapping` de cada controller van sin el prefijo.
 
 ### Documentación
 

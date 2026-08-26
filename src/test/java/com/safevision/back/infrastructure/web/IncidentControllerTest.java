@@ -6,6 +6,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.safevision.back.application.service.IncidentQueryService;
 import com.safevision.back.application.service.IncidentService;
 import com.safevision.back.infrastructure.web.dto.ApiEnvelope;
 import com.safevision.back.infrastructure.web.dto.CvClipReadyMessage;
@@ -31,11 +32,14 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 @ExtendWith(MockitoExtension.class)
-@DisplayName("IncidentController — HTTP (HU10)")
+@DisplayName("IncidentController — HTTP")
 class IncidentControllerTest {
 
     @Mock
     private IncidentService service;
+
+    @Mock
+    private IncidentQueryService queryService;
 
     private WebTestClient client;
 
@@ -43,7 +47,7 @@ class IncidentControllerTest {
 
     @BeforeEach
     void setUp() {
-        client = WebTestClient.bindToController(new IncidentController(service)).build();
+        client = WebTestClient.bindToController(new IncidentController(service, queryService)).build();
         sampleResponse = new IncidentResponse(100L, 10L, 20L, 1L,
                 List.of("helmet", "vest"), LocalDateTime.of(2026, 6, 24, 13, 30), LocalDateTime.now());
     }
@@ -56,7 +60,7 @@ class IncidentControllerTest {
         IncidentRequest request = new IncidentRequest(3, List.of("helmet", "vest"),
                 LocalDateTime.of(2026, 6, 24, 13, 30), "CAM-01", "Main-Site", "ZmFrZS1mcmFtZQ==");
 
-        client.post().uri("/api/v1/incidents")
+        client.post().uri("/incidents")
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(request)
                 .exchange()
@@ -73,19 +77,19 @@ class IncidentControllerTest {
         IncidentRequest request = new IncidentRequest(3, List.of("helmet"),
                 LocalDateTime.of(2026, 6, 24, 13, 30), "CAM-01", "Main-Site", "ZmFrZS1mcmFtZQ==");
 
-        client.post().uri("/api/v1/incidents")
+        client.post().uri("/incidents")
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(request)
                 .exchange()
                 .expectStatus().isBadRequest();
     }
 
-    // ── CP31: Ausencia de notificación sin incumplimiento ────────────────────
+    // ── Ausencia de notificación sin incumplimiento ────────────────────
 
     @Test
-    @DisplayName("CP31 — Sin incumplimiento activo (missing_epp vacío) no se registra ni se notifica")
-    void cp31_sinIncumplimientoActivo_noRegistraNiNotifica() {
-        client.post().uri("/api/v1/incidents")
+    @DisplayName("Sin incumplimiento activo (missing_epp vacío) no se registra ni se notifica")
+    void sinIncumplimientoActivo_noRegistraNiNotifica() {
+        client.post().uri("/incidents")
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("""
                         {"worker_code":3,"missing_epp":[],"timestamp":"2026-06-24T13:30:00",
@@ -98,10 +102,10 @@ class IncidentControllerTest {
         // (y por lo tanto la notificación Telegram que orquesta) nunca se invoca.
         verify(service, never()).register(any(), any());
 
-        System.out.println("\n[CP31] Evaluación conforme (missing_epp vacío) — sin incumplimiento:");
-        System.out.println("       Respuesta HTTP     = 400 (validación @NotEmpty)");
-        System.out.println("       service.register() = nunca invocado");
-        System.out.println("[CP31] No se invoca registro ni Telegram => PASA");
+        System.out.println("\nEvaluación conforme (missing_epp vacío) — sin incumplimiento:");
+        System.out.println(" Respuesta HTTP = 400 (validación @NotEmpty)");
+        System.out.println(" service.register() = nunca invocado");
+        System.out.println("No se invoca registro ni Telegram => PASA");
     }
 
     // ── Ingesta activa del CV (POST /api/v1/cv/incidents(/clips)) ────────────
@@ -115,7 +119,7 @@ class IncidentControllerTest {
                 LocalDateTime.of(2026, 6, 24, 13, 30), "CAM-01", "Main-Site",
                 "incidents/2026-08-10/cv-uuid-1/photo.jpg");
 
-        client.post().uri("/api/v1/cv/incidents")
+        client.post().uri("/cv/incidents")
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(message)
                 .exchange()
@@ -132,7 +136,7 @@ class IncidentControllerTest {
         CvIncidentMessage message = new CvIncidentMessage("cv-uuid-1", 3, List.of("helmet"),
                 LocalDateTime.of(2026, 6, 24, 13, 30), "CAM-01", "Main-Site", "incidents/photo.jpg");
 
-        client.post().uri("/api/v1/cv/incidents")
+        client.post().uri("/cv/incidents")
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(message)
                 .exchange()
@@ -147,7 +151,7 @@ class IncidentControllerTest {
         CvClipReadyMessage message = new CvClipReadyMessage("cv-uuid-1",
                 "incidents/2026-08-10/cv-uuid-1/clip.mp4", 10.0, 4831201L);
 
-        client.post().uri("/api/v1/cv/incidents/clips")
+        client.post().uri("/cv/incidents/clips")
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(message)
                 .exchange()
@@ -156,26 +160,27 @@ class IncidentControllerTest {
     }
 
     @Test
-    @DisplayName("POST /api/v1/cv/incidents/clips con incidente desconocido retorna 500 (best-effort)")
-    void registerClip_incidenteDesconocido_propagaError() {
+    @DisplayName("POST /api/v1/cv/incidents/clips con incidente desconocido retorna 400")
+    void registerClip_incidenteDesconocido_retorna400() {
         when(service.registerClipReady(any(CvClipReadyMessage.class))).thenReturn(Mono.error(
-                new IllegalArgumentException("Incidente desconocido para clip: external_id=cv-uuid-x")));
+                new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Incidente desconocido para clip: external_id=cv-uuid-x")));
 
         CvClipReadyMessage message = new CvClipReadyMessage("cv-uuid-x", "incidents/clip.mp4", 5.0, 100L);
 
-        client.post().uri("/api/v1/cv/incidents/clips")
+        client.post().uri("/cv/incidents/clips")
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(message)
                 .exchange()
-                .expectStatus().is5xxServerError();
+                .expectStatus().isBadRequest();
     }
 
     @Test
     @DisplayName("GET /api/v1/incidents retorna 200 con lista filtrada")
     void findAll_retorna200() {
-        when(service.findByFilter(any(), any(), any(), any())).thenReturn(Flux.just(sampleResponse));
+        when(queryService.findByFilter(any(), any(), any(), any())).thenReturn(Flux.just(sampleResponse));
 
-        client.get().uri("/api/v1/incidents?siteId=1")
+        client.get().uri("/incidents?siteId=1")
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody(new ParameterizedTypeReference<ApiEnvelope<List<IncidentResponse>>>() {});
@@ -184,9 +189,9 @@ class IncidentControllerTest {
     @Test
     @DisplayName("GET /api/v1/incidents/{id} existente retorna 200")
     void findById_existente_retorna200() {
-        when(service.findById(100L)).thenReturn(Mono.just(sampleResponse));
+        when(queryService.findById(100L)).thenReturn(Mono.just(sampleResponse));
 
-        client.get().uri("/api/v1/incidents/{id}", 100L)
+        client.get().uri("/incidents/{id}", 100L)
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody(new ParameterizedTypeReference<ApiEnvelope<IncidentResponse>>() {});
@@ -195,10 +200,10 @@ class IncidentControllerTest {
     @Test
     @DisplayName("GET /api/v1/incidents/{id} inexistente retorna 404")
     void findById_inexistente_retorna404() {
-        when(service.findById(anyLong())).thenReturn(Mono.error(
+        when(queryService.findById(anyLong())).thenReturn(Mono.error(
                 new ResponseStatusException(HttpStatus.NOT_FOUND, "Incident not found")));
 
-        client.get().uri("/api/v1/incidents/{id}", 999L)
+        client.get().uri("/incidents/{id}", 999L)
                 .exchange()
                 .expectStatus().isNotFound();
     }
@@ -208,9 +213,9 @@ class IncidentControllerTest {
     void findEvidence_existente_retorna200() {
         EvidenceResponse evidence = new EvidenceResponse("PHOTO",
                 "https://s3.amazonaws.com/bucket/photo.jpg?sig=x", null, null, LocalDateTime.now());
-        when(service.findEvidenceByIncidentId(100L)).thenReturn(Flux.just(evidence));
+        when(queryService.findEvidenceByIncidentId(100L)).thenReturn(Flux.just(evidence));
 
-        client.get().uri("/api/v1/incidents/{id}/evidence", 100L)
+        client.get().uri("/incidents/{id}/evidence", 100L)
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody(new ParameterizedTypeReference<ApiEnvelope<List<EvidenceResponse>>>() {});
@@ -219,10 +224,10 @@ class IncidentControllerTest {
     @Test
     @DisplayName("GET /api/v1/incidents/{id}/evidence de incidente inexistente retorna 404")
     void findEvidence_incidenteInexistente_retorna404() {
-        when(service.findEvidenceByIncidentId(999L)).thenReturn(Flux.error(
+        when(queryService.findEvidenceByIncidentId(999L)).thenReturn(Flux.error(
                 new ResponseStatusException(HttpStatus.NOT_FOUND, "Incident not found")));
 
-        client.get().uri("/api/v1/incidents/{id}/evidence", 999L)
+        client.get().uri("/incidents/{id}/evidence", 999L)
                 .exchange()
                 .expectStatus().isNotFound();
     }

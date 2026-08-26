@@ -29,7 +29,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 @ExtendWith(MockitoExtension.class)
-@DisplayName("ReportService — agregación de HU12")
+@DisplayName("ReportService — agregación de reportes")
 class ReportServiceTest {
 
     @Mock

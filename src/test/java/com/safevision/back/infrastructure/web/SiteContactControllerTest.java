@@ -42,7 +42,12 @@ class SiteContactControllerTest {
 
     @BeforeEach
     void setUp() {
-        client = WebTestClient.bindToController(new SiteContactController(service)).build();
+        client = WebTestClient.bindToController(new SiteContactController(service))
+                .webFilter((exchange, chain) -> {
+                    exchange.getAttributes().put("username", "supervisor1");
+                    return chain.filter(exchange);
+                })
+                .build();
         sampleResponse = new SiteContactResponse(1L, SITE_ID, "Supervisor", "999999999", "111222333",
                 true, LocalDateTime.now(), "system", LocalDateTime.now(), "system");
     }
@@ -52,7 +57,7 @@ class SiteContactControllerTest {
     void findBySite_retorna200() {
         when(service.findBySite(SITE_ID)).thenReturn(Flux.just(sampleResponse));
 
-        client.get().uri("/api/v1/sites/{siteId}/contacts", SITE_ID)
+        client.get().uri("/sites/{siteId}/contacts", SITE_ID)
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody(new ParameterizedTypeReference<ApiEnvelope<List<SiteContactResponse>>>() {})
@@ -65,8 +70,7 @@ class SiteContactControllerTest {
         when(service.create(anyLong(), any(SiteContactRequest.class), anyString()))
                 .thenReturn(Mono.just(sampleResponse));
 
-        client.post().uri("/api/v1/sites/{siteId}/contacts", SITE_ID)
-                .header("X-Username", "supervisor1")
+        client.post().uri("/sites/{siteId}/contacts", SITE_ID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(new SiteContactRequest("Supervisor", "999999999", "111222333"))
                 .exchange()
@@ -76,8 +80,7 @@ class SiteContactControllerTest {
     @Test
     @DisplayName("POST /api/v1/sites/{siteId}/contacts con teléfono inválido retorna 400")
     void create_telefonoInvalido_retorna400() {
-        client.post().uri("/api/v1/sites/{siteId}/contacts", SITE_ID)
-                .header("X-Username", "supervisor1")
+        client.post().uri("/sites/{siteId}/contacts", SITE_ID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(new SiteContactRequest("Supervisor", "abc", "111222333"))
                 .exchange()
@@ -90,8 +93,7 @@ class SiteContactControllerTest {
         when(service.update(anyLong(), anyLong(), any(SiteContactRequest.class), anyString()))
                 .thenReturn(Mono.just(sampleResponse));
 
-        client.put().uri("/api/v1/sites/{siteId}/contacts/{contactId}", SITE_ID, 1L)
-                .header("X-Username", "supervisor1")
+        client.put().uri("/sites/{siteId}/contacts/{contactId}", SITE_ID, 1L)
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(new SiteContactRequest("Supervisor", "999999999", "111222333"))
                 .exchange()
@@ -104,7 +106,7 @@ class SiteContactControllerTest {
         when(service.update(anyLong(), anyLong(), any(SiteContactRequest.class), anyString()))
                 .thenReturn(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Contact not found")));
 
-        client.put().uri("/api/v1/sites/{siteId}/contacts/{contactId}", SITE_ID, 99L)
+        client.put().uri("/sites/{siteId}/contacts/{contactId}", SITE_ID, 99L)
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(new SiteContactRequest("Supervisor", "999999999", "111222333"))
                 .exchange()
@@ -116,8 +118,7 @@ class SiteContactControllerTest {
     void delete_retorna200() {
         when(service.delete(anyLong(), anyLong(), anyString())).thenReturn(Mono.empty());
 
-        client.delete().uri("/api/v1/sites/{siteId}/contacts/{contactId}", SITE_ID, 1L)
-                .header("X-Username", "supervisor1")
+        client.delete().uri("/sites/{siteId}/contacts/{contactId}", SITE_ID, 1L)
                 .exchange()
                 .expectStatus().isOk();
     }

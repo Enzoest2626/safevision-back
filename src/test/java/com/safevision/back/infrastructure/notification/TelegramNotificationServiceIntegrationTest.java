@@ -1,6 +1,5 @@
 package com.safevision.back.infrastructure.notification;
 
-
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.safevision.back.domain.model.Camera;
@@ -19,7 +18,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * CP30 (HU10) — integración real contra la Bot API de Telegram (sin mocks).
+ * Integración real contra la Bot API de Telegram (sin mocks).
  * Requiere TELEGRAM_BOT_TOKEN y TELEGRAM_CHAT_ID reales en el entorno; si
  * faltan, JUnit omite el test (no rompe el build en otras máquinas ni en CI).
  *
@@ -28,7 +27,7 @@ import java.util.List;
  */
 @EnabledIfEnvironmentVariable(named = "TELEGRAM_BOT_TOKEN", matches = ".+")
 @EnabledIfEnvironmentVariable(named = "TELEGRAM_CHAT_ID", matches = ".+")
-@DisplayName("TelegramNotificationService — CP30 (integración real, tiempo de respuesta bajo carga)")
+@DisplayName("TelegramNotificationService — integración real, tiempo de respuesta bajo carga")
 class TelegramNotificationServiceIntegrationTest {
 
     // 1x1 px JPEG válido en base64 — evidencia mínima para sendPhoto
@@ -55,12 +54,12 @@ class TelegramNotificationServiceIntegrationTest {
     }
 
     @Test
-    @DisplayName("CP30 — N envíos secuenciales y concurrentes responden en <=5s cada uno")
-    void cp30_tiempoDeRespuestaBajoCarga_menorOIgualA5s() {
+    @DisplayName("N envíos secuenciales y concurrentes responden en <=5s cada uno")
+    void tiempoDeRespuestaBajoCarga_menorOIgualA5s() {
         TelegramNotificationService service = buildService();
         String chatId = System.getenv("TELEGRAM_CHAT_ID");
 
-        System.out.println("\n[CP30] Tiempo de respuesta real de Telegram bajo carga (N=" + N + " secuenciales + " + N + " concurrentes):");
+        System.out.println("\nTiempo de respuesta real de Telegram bajo carga (N=" + N + " secuenciales + " + N + " concurrentes):");
 
         List<Long> secuencialesMs = new ArrayList<>();
         for (int i = 0; i < N; i++) {
@@ -68,7 +67,7 @@ class TelegramNotificationServiceIntegrationTest {
             service.sendIncidentAlert(chatId, sampleIncident(i), camera, site, "", FRAME_B64).block();
             long elapsed = System.currentTimeMillis() - start;
             secuencialesMs.add(elapsed);
-            System.out.println("       Secuencial #" + (i + 1) + " → " + elapsed + " ms");
+            System.out.println(" Secuencial #" + (i + 1) + " → " + elapsed + " ms");
         }
 
         List<Long> concurrentesMs = Flux.range(0, N)
@@ -81,12 +80,12 @@ class TelegramNotificationServiceIntegrationTest {
                 .block();
 
         for (int i = 0; i < concurrentesMs.size(); i++) {
-            System.out.println("       Concurrente #" + (i + 1) + " → " + concurrentesMs.get(i) + " ms");
+            System.out.println(" Concurrente #" + (i + 1) + " → " + concurrentesMs.get(i) + " ms");
         }
 
         boolean todasBajoLimite = secuencialesMs.stream().allMatch(ms -> ms <= 5000)
                 && concurrentesMs.stream().allMatch(ms -> ms <= 5000);
-        System.out.println("[CP30] Todas las respuestas <= 5000 ms: " + todasBajoLimite
+        System.out.println("Todas las respuestas <= 5000 ms: " + todasBajoLimite
                 + " => " + (todasBajoLimite ? "PASA" : "FALLA"));
 
         assertThat(secuencialesMs).allMatch(ms -> ms <= 5000);

@@ -1,5 +1,6 @@
 package com.safevision.back.infrastructure.web;
 
+import com.safevision.back.application.service.IncidentQueryService;
 import com.safevision.back.application.service.IncidentService;
 import com.safevision.back.infrastructure.web.dto.ApiEnvelope;
 import com.safevision.back.infrastructure.web.dto.CvClipReadyMessage;
@@ -20,7 +21,6 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
-import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
@@ -31,26 +31,24 @@ import java.util.List;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/api/v1")
-@Tag(name = "Incidents", description = "Registro e ingesta de incidentes EPP (HU10)")
+@Tag(name = "Incidents", description = "Registro e ingesta de incidentes EPP")
 public class IncidentController {
 
     private final IncidentService incidentService;
+    private final IncidentQueryService incidentQueryService;
 
-    public IncidentController(IncidentService incidentService) {
+    public IncidentController(IncidentService incidentService, IncidentQueryService incidentQueryService) {
         this.incidentService = incidentService;
+        this.incidentQueryService = incidentQueryService;
     }
 
     @PostMapping("/incidents")
     @ResponseStatus(HttpStatus.CREATED)
-    @Operation(summary = "Registrar incidente EPP (legacy, frame_b64 inline)",
-               description = "Invocado exclusivamente por el módulo de Computer Vision. Sin uso activo — el "
-                       + "camino activo es POST /api/v1/cv/incidents, con evidencia en S3. Se deja sin borrar "
-                       + "por si hace falta volver atrás. Persiste el incidente y su evidencia, y notifica a "
-                       + "la obra vía Telegram.",
+    @Operation(summary = "Registrar incidente EPP (legacy, evidencia inline en base64)",
+               description = "Invocado por el módulo de Computer Vision. Persiste el incidente y notifica "
+                       + "a la obra vía Telegram.",
                security = @SecurityRequirement(name = "bearerAuth"))
     @ApiResponse(responseCode = "201", description = "Incidente registrado")
-    @ApiResponse(responseCode = "400", description = "Worker, cámara u obra desconocidos")
     public Mono<ApiEnvelope<IncidentResponse>> register(
             @Valid @RequestBody IncidentRequest request,
             @Parameter(description = "Id de correlación generado por el CV para seguir el evento en los logs "
@@ -93,15 +91,14 @@ public class IncidentController {
             @RequestParam(required = false) Long workerId,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime to) {
-        return ApiEnvelope.wrapList(incidentService.findByFilter(siteId, workerId, from, to), HttpStatus.OK);
+        return ApiEnvelope.wrapList(incidentQueryService.findByFilter(siteId, workerId, from, to), HttpStatus.OK);
     }
 
     @GetMapping("/incidents/{id}")
     @Operation(summary = "Detalle de incidente")
     @ApiResponse(responseCode = "200", description = "Incidente encontrado")
-    @ApiResponse(responseCode = "404", description = "Incidente no encontrado")
     public Mono<ApiEnvelope<IncidentResponse>> findById(@PathVariable Long id) {
-        return ApiEnvelope.wrap(incidentService.findById(id), HttpStatus.OK);
+        return ApiEnvelope.wrap(incidentQueryService.findById(id), HttpStatus.OK);
     }
 
     @GetMapping("/incidents/{id}/evidence")
@@ -109,8 +106,7 @@ public class IncidentController {
                description = "Cada fila trae una URL de S3 prefirmada de corta duración — no hay link "
                        + "público permanente. Filas legacy con evidencia inline (frame_b64) traen url=null.")
     @ApiResponse(responseCode = "200", description = "Lista de evidencia (puede estar vacía)")
-    @ApiResponse(responseCode = "404", description = "Incidente no encontrado")
     public Mono<ApiEnvelope<List<EvidenceResponse>>> findEvidence(@PathVariable Long id) {
-        return ApiEnvelope.wrapList(incidentService.findEvidenceByIncidentId(id), HttpStatus.OK);
+        return ApiEnvelope.wrapList(incidentQueryService.findEvidenceByIncidentId(id), HttpStatus.OK);
     }
 }

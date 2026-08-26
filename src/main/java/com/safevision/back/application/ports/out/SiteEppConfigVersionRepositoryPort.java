@@ -7,8 +7,8 @@ import org.springframework.data.repository.reactive.ReactiveCrudRepository;
 import reactor.core.publisher.Mono;
 
 /**
- * Control de versión optimista para la configuración EPP de una obra (CP18,
- * HU04). ensureExists + compareAndSwap implementan un compare-and-swap
+ * Control de versión optimista para la configuración EPP de una obra.
+ * ensureExists + compareAndSwap implementan un compare-and-swap
  * atómico a nivel de fila: si dos PUT concurrentes leen la misma versión,
  * solo uno logra el CAS — el otro recibe 0 filas afectadas y el service
  * responde 409 CONFLICT.

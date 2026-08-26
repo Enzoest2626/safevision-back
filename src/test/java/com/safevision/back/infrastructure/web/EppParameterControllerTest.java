@@ -25,7 +25,7 @@ import reactor.core.publisher.Mono;
 import java.util.List;
 
 @ExtendWith(MockitoExtension.class)
-@DisplayName("EppParameterController — HU04 (HTTP por obra)")
+@DisplayName("EppParameterController — HTTP por obra")
 class EppParameterControllerTest {
 
     @Mock
@@ -41,49 +41,52 @@ class EppParameterControllerTest {
     void setUp() {
         client = WebTestClient
                 .bindToController(new EppParameterController(service))
+                .webFilter((exchange, chain) -> {
+                    exchange.getAttributes().put("username", "supervisor1");
+                    return chain.filter(exchange);
+                })
                 .build();
 
         sampleResponse = new EppParameterResponse(
                 SITE_ID,
                 List.of(
-                        new EppParameterResponse.EppItem(1L, "casco",   "Casco de seguridad"),
+                        new EppParameterResponse.EppItem(1L, "casco", "Casco de seguridad"),
                         new EppParameterResponse.EppItem(2L, "chaleco", "Chaleco reflectivo")
                 )
         );
     }
 
-    // ── CP16: GET /api/v1/parameters/{siteId} ────────────────────────────────
+    // ── GET /api/v1/parameters/{siteId} ────────────────────────────────
 
     @Test
-    @DisplayName("CP16 — GET retorna 200 con EPPs requeridos para la obra")
-    void cp16_get_retorna200ConEppsDeObra() {
+    @DisplayName("GET retorna 200 con EPPs requeridos para la obra")
+    void get_retorna200ConEppsDeObra() {
         when(service.findBySite(SITE_ID)).thenReturn(Mono.just(sampleResponse));
 
-        client.get().uri("/api/v1/parameters/{siteId}", SITE_ID)
+        client.get().uri("/parameters/{siteId}", SITE_ID)
                 .exchange()
                 .expectStatus().isOk()
                 .expectHeader().contentType(MediaType.APPLICATION_JSON)
                 .expectBody(new ParameterizedTypeReference<ApiEnvelope<EppParameterResponse>>() {})
                 .value(envelope -> {
                     EppParameterResponse body = envelope.data();
-                    System.out.println("\n[CP16] GET /api/v1/parameters/" + SITE_ID + " — 200 OK:");
-                    System.out.println("       siteId      = " + body.siteId());
-                    System.out.println("       requiredEpp = " + body.requiredEpp().stream()
+                    System.out.println("\nGET /api/v1/parameters/" + SITE_ID + " — 200 OK:");
+                    System.out.println(" siteId = " + body.siteId());
+                    System.out.println(" requiredEpp = " + body.requiredEpp().stream()
                             .map(EppParameterResponse.EppItem::code).toList());
-                    System.out.println("[CP16] Lista de reglas activas retornada => PASA");
+                    System.out.println("Lista de reglas activas retornada => PASA");
                 });
     }
 
-    // ── CP15: PUT /api/v1/parameters/{siteId} con datos válidos ─────────────
+    // ── PUT /api/v1/parameters/{siteId} con datos válidos ─────────────
 
     @Test
-    @DisplayName("CP15 — PUT con payload válido retorna 200 y persiste por obra")
-    void cp15_put_payloadValido_retorna200() {
+    @DisplayName("PUT con payload válido retorna 200 y persiste por obra")
+    void put_payloadValido_retorna200() {
         when(service.updateForSite(anyLong(), any(EppParameterRequest.class), anyString()))
                 .thenReturn(Mono.just(sampleResponse));
 
-        client.put().uri("/api/v1/parameters/{siteId}", SITE_ID)
-                .header("X-Username", "supervisor1")
+        client.put().uri("/parameters/{siteId}", SITE_ID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("{\"requiredEpp\":[\"casco\",\"chaleco\"]}")
                 .exchange()
@@ -91,40 +94,40 @@ class EppParameterControllerTest {
                 .expectBody(new ParameterizedTypeReference<ApiEnvelope<EppParameterResponse>>() {})
                 .value(envelope -> {
                     EppParameterResponse body = envelope.data();
-                    System.out.println("\n[CP15] PUT /api/v1/parameters/" + SITE_ID + " — payload válido:");
-                    System.out.println("       siteId      = " + body.siteId());
-                    System.out.println("       requiredEpp = " + body.requiredEpp().stream()
+                    System.out.println("\nPUT /api/v1/parameters/" + SITE_ID + " — payload válido:");
+                    System.out.println(" siteId = " + body.siteId());
+                    System.out.println(" requiredEpp = " + body.requiredEpp().stream()
                             .map(EppParameterResponse.EppItem::code).toList());
-                    System.out.println("[CP15] Regla por obra creada, 200 retornado => PASA");
+                    System.out.println("Regla por obra creada, 200 retornado => PASA");
                 });
     }
 
-    // ── CP17: PUT con datos inválidos → 400 ──────────────────────────────────
+    // ── PUT con datos inválidos → 400 ──────────────────────────────────
 
     @Test
-    @DisplayName("CP17 — PUT con lista vacía retorna 400 (validación @NotEmpty)")
-    void cp17_put_listaVacia_retorna400() {
-        client.put().uri("/api/v1/parameters/{siteId}", SITE_ID)
+    @DisplayName("PUT con lista vacía retorna 400 (validación @NotEmpty)")
+    void put_listaVacia_retorna400() {
+        client.put().uri("/parameters/{siteId}", SITE_ID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("{\"requiredEpp\":[]}")
                 .exchange()
                 .expectStatus().isBadRequest()
                 .expectBody()
                 .consumeWith(result -> {
-                    System.out.println("\n[CP17] PUT /api/v1/parameters/" + SITE_ID + " — lista vacía:");
-                    System.out.println("       Status HTTP = 400");
-                    System.out.println("[CP17] Respuesta 400, nada persistido => PASA");
+                    System.out.println("\nPUT /api/v1/parameters/" + SITE_ID + " — lista vacía:");
+                    System.out.println(" Status HTTP = 400");
+                    System.out.println("Respuesta 400, nada persistido => PASA");
                 });
     }
 
     @Test
-    @DisplayName("CP17 — PUT con EPP inexistente retorna 400 (servicio valida contra catálogo)")
-    void cp17_put_eppInexistente_retorna400() {
+    @DisplayName("PUT con EPP inexistente retorna 400 (servicio valida contra catálogo)")
+    void put_eppInexistente_retorna400() {
         when(service.updateForSite(anyLong(), any(EppParameterRequest.class), anyString()))
                 .thenReturn(Mono.error(new ResponseStatusException(
                         HttpStatus.BAD_REQUEST, "EPP desconocido: casco_minero")));
 
-        client.put().uri("/api/v1/parameters/{siteId}", SITE_ID)
+        client.put().uri("/parameters/{siteId}", SITE_ID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("{\"requiredEpp\":[\"casco_minero\"]}")
                 .exchange()

@@ -41,7 +41,7 @@ import reactor.test.StepVerifier;
 import java.time.LocalDateTime;
 
 @ExtendWith(MockitoExtension.class)
-@DisplayName("IncidentNotificationService — HU10 (resolución de contactos + alerta Telegram)")
+@DisplayName("IncidentNotificationService — resolución de contactos + alerta Telegram")
 class IncidentNotificationServiceTest {
 
     @Mock private NotificationRepositoryPort notificationRepo;
@@ -182,11 +182,11 @@ class IncidentNotificationServiceTest {
         verify(telegramService, never()).sendIncidentAlert(anyString(), any(), any(), any(), anyString(), anyString());
     }
 
-    // ── CP29: Bot de Telegram inaccesible / rate-limit ────────────────────────
+    // ── Bot de Telegram inaccesible / rate-limit ────────────────────────
 
     @Test
-    @DisplayName("CP29 — Bot de Telegram con rate-limit (mockeado) registra FAILED sin pérdida silenciosa")
-    void cp29_botTelegramRateLimit_registraFailedSinPerdidaSilenciosa() {
+    @DisplayName("Bot de Telegram con rate-limit (mockeado) registra FAILED sin pérdida silenciosa")
+    void botTelegramRateLimit_registraFailedSinPerdidaSilenciosa() {
         when(siteContactRepo.findBySiteIdAndTelegramChatIdIsNotNullAndActiveTrue(1L)).thenReturn(Flux.empty());
         when(telegramService.sendIncidentAlert(eq("GLOBAL-CHAT"), any(), any(), any(), anyString(), anyString()))
                 .thenReturn(Mono.error(new IllegalStateException("Telegram respondió 429: Too Many Requests")));
@@ -201,12 +201,12 @@ class IncidentNotificationServiceTest {
         boolean registradoFailed = saved.statusId().equals(failedStatus.id())
                 && saved.errorMsg() != null && saved.errorMsg().contains("429");
 
-        System.out.println("\n[CP29] Bot de Telegram inaccesible (rate-limit 429, mockeado):");
-        System.out.println("       incidentId persistido  = " + saved.incidentId());
-        System.out.println("       notification.statusId  = " + saved.statusId() + " (FAILED=" + failedStatus.id() + ")");
-        System.out.println("       notification.errorMsg  = " + saved.errorMsg());
-        System.out.println("       Nota: IncidentNotificationService no implementa reintento — onErrorResume va directo a FAILED.");
-        System.out.println("[CP29] Registro FAILED sin pérdida silenciosa del evento: " + registradoFailed + " => PASA");
+        System.out.println("\nBot de Telegram inaccesible (rate-limit 429, mockeado):");
+        System.out.println(" incidentId persistido = " + saved.incidentId());
+        System.out.println(" notification.statusId = " + saved.statusId() + " (FAILED=" + failedStatus.id() + ")");
+        System.out.println(" notification.errorMsg = " + saved.errorMsg());
+        System.out.println(" Nota: IncidentNotificationService no implementa reintento — onErrorResume va directo a FAILED.");
+        System.out.println("Registro FAILED sin pérdida silenciosa del evento: " + registradoFailed + " => PASA");
 
         assertThat(saved.statusId()).isEqualTo(failedStatus.id());
         assertThat(saved.errorMsg()).contains("429");

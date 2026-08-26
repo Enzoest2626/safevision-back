@@ -28,7 +28,7 @@ class HttpCameraConfigPublisherTest {
 
     private HttpCameraConfigPublisher buildPublisher(ExchangeFunction exchangeFunction) {
         WebClient.Builder builder = WebClient.builder().exchangeFunction(exchangeFunction);
-        return new HttpCameraConfigPublisher(builder, 5001);
+        return new HttpCameraConfigPublisher(builder, 5001, 5);
     }
 
     @Test

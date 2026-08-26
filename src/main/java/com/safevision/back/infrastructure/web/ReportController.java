@@ -4,8 +4,8 @@ import com.safevision.back.application.dto.report.ReportResult;
 import com.safevision.back.application.service.ReportService;
 import com.safevision.back.infrastructure.web.dto.ApiEnvelope;
 import io.swagger.v3.oas.annotations.Operation;
-import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
@@ -18,8 +18,8 @@ import reactor.core.publisher.Mono;
 import java.time.LocalDateTime;
 
 @RestController
-@RequestMapping("/api/v1/reports")
-@Tag(name = "Reports", description = "Reportes agregados de incidentes EPP (HU12)")
+@RequestMapping("/reports")
+@Tag(name = "Reports", description = "Reportes agregados de incidentes EPP")
 public class ReportController {
 
     private final ReportService reportService;

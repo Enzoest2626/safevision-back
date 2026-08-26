@@ -15,8 +15,8 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestAttribute;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
@@ -25,7 +25,7 @@ import reactor.core.publisher.Mono;
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/v1/sites")
+@RequestMapping("/sites")
 @Tag(name = "Sites", description = "Gestión de obras de construcción")
 public class SiteController {
 
@@ -45,7 +45,6 @@ public class SiteController {
     @GetMapping("/{id}")
     @Operation(summary = "Detalle de obra")
     @ApiResponse(responseCode = "200", description = "Obra encontrada")
-    @ApiResponse(responseCode = "404", description = "Obra no encontrada")
     public Mono<ApiEnvelope<SiteResponse>> findById(@PathVariable Long id) {
         return ApiEnvelope.wrap(siteService.findById(id), HttpStatus.OK);
     }
@@ -55,26 +54,24 @@ public class SiteController {
     @Operation(summary = "Crear obra", security = @SecurityRequirement(name = "bearerAuth"))
     @ApiResponse(responseCode = "201", description = "Obra creada")
     public Mono<ApiEnvelope<SiteResponse>> create(@Valid @RequestBody SiteRequest request,
-                                     @RequestHeader(value = "X-Username", defaultValue = "system") String username) {
+                                     @RequestAttribute("username") String username) {
         return ApiEnvelope.wrap(siteService.create(request, username), HttpStatus.CREATED);
     }
 
     @PutMapping("/{id}")
     @Operation(summary = "Actualizar obra", security = @SecurityRequirement(name = "bearerAuth"))
     @ApiResponse(responseCode = "200", description = "Obra actualizada")
-    @ApiResponse(responseCode = "404", description = "Obra no encontrada")
     public Mono<ApiEnvelope<SiteResponse>> update(@PathVariable Long id,
                                      @Valid @RequestBody SiteRequest request,
-                                     @RequestHeader(value = "X-Username", defaultValue = "system") String username) {
+                                     @RequestAttribute("username") String username) {
         return ApiEnvelope.wrap(siteService.update(id, request, username), HttpStatus.OK);
     }
 
     @DeleteMapping("/{id}")
     @Operation(summary = "Desactivar obra (soft delete)", security = @SecurityRequirement(name = "bearerAuth"))
     @ApiResponse(responseCode = "200", description = "Obra desactivada")
-    @ApiResponse(responseCode = "404", description = "Obra no encontrada")
     public Mono<ApiEnvelope<Void>> delete(@PathVariable Long id,
-                             @RequestHeader(value = "X-Username", defaultValue = "system") String username) {
+                             @RequestAttribute("username") String username) {
         return ApiEnvelope.wrapVoid(siteService.delete(id, username), HttpStatus.OK);
     }
 }

@@ -42,7 +42,12 @@ class ZoneControllerTest {
 
     @BeforeEach
     void setUp() {
-        client = WebTestClient.bindToController(new ZoneController(service)).build();
+        client = WebTestClient.bindToController(new ZoneController(service))
+                .webFilter((exchange, chain) -> {
+                    exchange.getAttributes().put("username", "supervisor1");
+                    return chain.filter(exchange);
+                })
+                .build();
         sampleResponse = new ZoneResponse(1L, SITE_ID, "ZONA-1", "Piso 2", true,
                 LocalDateTime.now(), "system", LocalDateTime.now(), "system");
     }
@@ -52,7 +57,7 @@ class ZoneControllerTest {
     void findBySite_retorna200() {
         when(service.findBySite(SITE_ID)).thenReturn(Flux.just(sampleResponse));
 
-        client.get().uri("/api/v1/sites/{siteId}/zones", SITE_ID)
+        client.get().uri("/sites/{siteId}/zones", SITE_ID)
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody(new ParameterizedTypeReference<ApiEnvelope<List<ZoneResponse>>>() {})
@@ -64,8 +69,7 @@ class ZoneControllerTest {
     void create_retorna201() {
         when(service.create(anyLong(), any(ZoneRequest.class), anyString())).thenReturn(Mono.just(sampleResponse));
 
-        client.post().uri("/api/v1/sites/{siteId}/zones", SITE_ID)
-                .header("X-Username", "supervisor1")
+        client.post().uri("/sites/{siteId}/zones", SITE_ID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(new ZoneRequest("ZONA-1", "Piso 2"))
                 .exchange()
@@ -78,8 +82,7 @@ class ZoneControllerTest {
         when(service.update(anyLong(), anyLong(), any(ZoneRequest.class), anyString()))
                 .thenReturn(Mono.just(sampleResponse));
 
-        client.put().uri("/api/v1/sites/{siteId}/zones/{zoneId}", SITE_ID, 1L)
-                .header("X-Username", "supervisor1")
+        client.put().uri("/sites/{siteId}/zones/{zoneId}", SITE_ID, 1L)
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(new ZoneRequest("ZONA-1", "Piso 2"))
                 .exchange()
@@ -92,7 +95,7 @@ class ZoneControllerTest {
         when(service.update(anyLong(), anyLong(), any(ZoneRequest.class), anyString()))
                 .thenReturn(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Zone not found")));
 
-        client.put().uri("/api/v1/sites/{siteId}/zones/{zoneId}", SITE_ID, 99L)
+        client.put().uri("/sites/{siteId}/zones/{zoneId}", SITE_ID, 99L)
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(new ZoneRequest("ZONA-1", "Piso 2"))
                 .exchange()
@@ -104,8 +107,7 @@ class ZoneControllerTest {
     void delete_retorna200() {
         when(service.delete(anyLong(), anyLong(), anyString())).thenReturn(Mono.empty());
 
-        client.delete().uri("/api/v1/sites/{siteId}/zones/{zoneId}", SITE_ID, 1L)
-                .header("X-Username", "supervisor1")
+        client.delete().uri("/sites/{siteId}/zones/{zoneId}", SITE_ID, 1L)
                 .exchange()
                 .expectStatus().isOk();
     }

@@ -39,7 +39,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 @ExtendWith(MockitoExtension.class)
-@DisplayName("EppParameterService — HU04 (por obra)")
+@DisplayName("EppParameterService — por obra")
 class EppParameterServiceTest {
 
     @Mock
@@ -58,7 +58,7 @@ class EppParameterServiceTest {
 
     private static final Long SITE_ID = 1L;
 
-    private final EppParameter casco   = epp(1L, "casco",   "Casco de seguridad");
+    private final EppParameter casco = epp(1L, "casco", "Casco de seguridad");
     private final EppParameter chaleco = epp(2L, "chaleco", "Chaleco reflectivo");
     private final EppParameter guantes = epp(3L, "guantes", "Guantes de protección");
 
@@ -76,11 +76,11 @@ class EppParameterServiceTest {
         return new SiteEppRequirement(null, siteId, eppId, LocalDateTime.now(), "system");
     }
 
-    // ── CP15: Creación de regla EPP válida para una obra ─────────────────────
+    // ── Creación de regla EPP válida para una obra ─────────────────────
 
     @Test
-    @DisplayName("CP15 — PUT con EPPs válidos persiste la configuración por obra")
-    void cp15_actualizarEppsPorObra_persiste() {
+    @DisplayName("PUT con EPPs válidos persiste la configuración por obra")
+    void actualizarEppsPorObra_persiste() {
         EppParameterRequest request = new EppParameterRequest(List.of("casco", "chaleco"));
 
         when(eppRepo.findByCode("casco")).thenReturn(Mono.just(casco));
@@ -95,11 +95,11 @@ class EppParameterServiceTest {
 
         StepVerifier.create(service.updateForSite(SITE_ID, request, "supervisor1"))
                 .assertNext(response -> {
-                    System.out.println("\n[CP15] Regla EPP por obra actualizada:");
-                    System.out.println("       siteId      = " + response.siteId());
-                    System.out.println("       requiredEpp = " + response.requiredEpp().stream()
+                    System.out.println("\nRegla EPP por obra actualizada:");
+                    System.out.println(" siteId = " + response.siteId());
+                    System.out.println(" requiredEpp = " + response.requiredEpp().stream()
                             .map(EppParameterResponse.EppItem::code).toList());
-                    System.out.println("[CP15] Regla válida persistida por obra, 200 => PASA");
+                    System.out.println("Regla válida persistida por obra, 200 => PASA");
 
                     assertThat(response.siteId()).isEqualTo(SITE_ID);
                     assertThat(response.requiredEpp()).hasSize(2);
@@ -115,11 +115,11 @@ class EppParameterServiceTest {
                 codes.containsAll(List.of("casco", "chaleco"))));
     }
 
-    // ── CP16: Consulta de reglas activas para una obra ────────────────────────
+    // ── Consulta de reglas activas para una obra ────────────────────────
 
     @Test
-    @DisplayName("CP16 — GET retorna EPPs configurados para la obra")
-    void cp16_consultarEppsPorObra_retornaLista() {
+    @DisplayName("GET retorna EPPs configurados para la obra")
+    void consultarEppsPorObra_retornaLista() {
         when(siteEppRepo.findBySiteId(SITE_ID))
                 .thenReturn(Flux.just(req(SITE_ID, 1L), req(SITE_ID, 2L)));
         when(eppRepo.findById(1L)).thenReturn(Mono.just(casco));
@@ -127,10 +127,10 @@ class EppParameterServiceTest {
 
         StepVerifier.create(service.findBySite(SITE_ID))
                 .assertNext(response -> {
-                    System.out.println("\n[CP16] Reglas EPP activas para obra " + SITE_ID + ":");
-                    System.out.println("       requiredEpp = " + response.requiredEpp().stream()
+                    System.out.println("\nReglas EPP activas para obra " + SITE_ID + ":");
+                    System.out.println(" requiredEpp = " + response.requiredEpp().stream()
                             .map(EppParameterResponse.EppItem::code).toList());
-                    System.out.println("[CP16] Lista de reglas activas retornada => PASA");
+                    System.out.println("Lista de reglas activas retornada => PASA");
 
                     assertThat(response.siteId()).isEqualTo(SITE_ID);
                     assertThat(response.requiredEpp()).hasSize(2);
@@ -139,35 +139,35 @@ class EppParameterServiceTest {
     }
 
     @Test
-    @DisplayName("CP16 — GET con obra sin configuración usa fallback global")
-    void cp16_sinConfiguracionDeObra_usaFallbackGlobal() {
+    @DisplayName("GET con obra sin configuración usa fallback global")
+    void sinConfiguracionDeObra_usaFallbackGlobal() {
         when(siteEppRepo.findBySiteId(SITE_ID)).thenReturn(Flux.empty());
         when(eppRepo.findByActiveTrue()).thenReturn(Flux.just(casco, chaleco, guantes));
 
         StepVerifier.create(service.findBySite(SITE_ID))
                 .assertNext(response -> {
-                    System.out.println("\n[CP16] Obra sin configuración — fallback global:");
-                    System.out.println("       EPPs fallback = " + response.requiredEpp().stream()
+                    System.out.println("\nObra sin configuración — fallback global:");
+                    System.out.println(" EPPs fallback = " + response.requiredEpp().stream()
                             .map(EppParameterResponse.EppItem::code).toList());
-                    System.out.println("[CP16] Fallback a catálogo global => PASA");
+                    System.out.println("Fallback a catálogo global => PASA");
 
                     assertThat(response.requiredEpp()).hasSize(3);
                 })
                 .verifyComplete();
     }
 
-    // ── CP17: Datos inválidos → 400 ───────────────────────────────────────────
+    // ── Datos inválidos → 400 ───────────────────────────────────────────
 
     @Test
-    @DisplayName("CP17 — Lista vacía de EPPs lanza BAD_REQUEST")
-    void cp17_listaVacia_lanzaBadRequest() {
+    @DisplayName("Lista vacía de EPPs lanza BAD_REQUEST")
+    void listaVacia_lanzaBadRequest() {
         EppParameterRequest request = new EppParameterRequest(List.of());
 
         StepVerifier.create(service.updateForSite(SITE_ID, request, "supervisor1"))
                 .expectErrorMatches(ex -> {
-                    System.out.println("\n[CP17] Payload inválido — lista vacía:");
-                    System.out.println("       Error: " + ex.getMessage());
-                    System.out.println("[CP17] 400 generado, nada persistido => PASA");
+                    System.out.println("\nPayload inválido — lista vacía:");
+                    System.out.println(" Error: " + ex.getMessage());
+                    System.out.println("400 generado, nada persistido => PASA");
                     return ex instanceof ResponseStatusException rse
                            && rse.getStatusCode() == HttpStatus.BAD_REQUEST;
                 })
@@ -179,8 +179,8 @@ class EppParameterServiceTest {
     }
 
     @Test
-    @DisplayName("CP17 — Código EPP inexistente en catálogo lanza BAD_REQUEST")
-    void cp17_eppDesconocido_lanzaBadRequest() {
+    @DisplayName("Código EPP inexistente en catálogo lanza BAD_REQUEST")
+    void eppDesconocido_lanzaBadRequest() {
         EppParameterRequest request = new EppParameterRequest(List.of("casco", "casco_minero"));
         when(eppRepo.findByCode("casco")).thenReturn(Mono.just(casco));
         when(eppRepo.findByCode("casco_minero")).thenReturn(Mono.empty());
@@ -196,11 +196,11 @@ class EppParameterServiceTest {
         verify(rulesPublisher, never()).publishRules(anyLong(), any());
     }
 
-    // ── CP18: Edición concurrente sobre la misma obra (optimistic locking) ────
+    // ── Edición concurrente sobre la misma obra (optimistic locking) ────
 
     @Test
-    @DisplayName("CP18 — 20 repeticiones de dos PUT reales concurrentes (threads): siempre 1 gana y 1 recibe 409")
-    void cp18_edicionConcurrente_conflictoDeVersion_20Repeticiones() throws Exception {
+    @DisplayName("20 repeticiones de dos PUT reales concurrentes (threads): siempre 1 gana y 1 recibe 409")
+    void edicionConcurrente_conflictoDeVersion_20Repeticiones() throws Exception {
         final int REPETICIONES = 20;
         EppParameterRequest req1 = new EppParameterRequest(List.of("casco"));
         EppParameterRequest req2 = new EppParameterRequest(List.of("chaleco"));
@@ -222,7 +222,7 @@ class EppParameterServiceTest {
         when(siteEppRepo.deleteAllBySiteId(SITE_ID)).thenReturn(Mono.just(1L));
         when(siteEppRepo.save(any(SiteEppRequirement.class))).thenReturn(Mono.just(req(SITE_ID, 1L)));
 
-        System.out.println("\n[CP18] " + REPETICIONES + " repeticiones de dos PUT reales concurrentes "
+        System.out.println("\n" + REPETICIONES + " repeticiones de dos PUT reales concurrentes "
                 + "(threads) sobre siteId=" + SITE_ID + ":");
 
         int rondasCorrectas = 0;
@@ -265,14 +265,14 @@ class EppParameterServiceTest {
                 if (rondaOk) {
                     rondasCorrectas++;
                 }
-                System.out.println("       Ronda " + ronda + ": exitosos=" + exitosos
+                System.out.println(" Ronda " + ronda + ": exitosos=" + exitosos
                         + " conflictos=" + conflictos + " " + (rondaOk ? "OK" : "FALLA"));
             }
         } finally {
             pool.shutdown();
         }
 
-        System.out.println("[CP18] " + rondasCorrectas + "/" + REPETICIONES
+        System.out.println(rondasCorrectas + "/" + REPETICIONES
                 + " rondas con exactamente 1 exitoso y 1 conflicto => "
                 + (rondasCorrectas == REPETICIONES ? "PASA" : "FALLA"));
 

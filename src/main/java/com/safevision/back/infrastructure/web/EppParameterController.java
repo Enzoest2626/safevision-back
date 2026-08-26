@@ -13,14 +13,14 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestAttribute;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
 
 @RestController
-@RequestMapping("/api/v1/parameters")
+@RequestMapping("/parameters")
 @Tag(name = "EPP Parameters", description = "Reglas EPP requeridas por obra")
 public class EppParameterController {
 
@@ -42,11 +42,10 @@ public class EppParameterController {
     @Operation(summary = "Actualizar EPPs requeridos para una obra",
                security = @SecurityRequirement(name = "bearerAuth"))
     @ApiResponse(responseCode = "200", description = "Configuración actualizada")
-    @ApiResponse(responseCode = "400", description = "Código EPP inválido o lista vacía")
     public Mono<ApiEnvelope<EppParameterResponse>> updateForSite(
             @PathVariable Long siteId,
             @Valid @RequestBody EppParameterRequest request,
-            @RequestHeader(value = "X-Username", defaultValue = "system") String username) {
+            @RequestAttribute("username") String username) {
         return ApiEnvelope.wrap(service.updateForSite(siteId, request, username), HttpStatus.OK);
     }
 }

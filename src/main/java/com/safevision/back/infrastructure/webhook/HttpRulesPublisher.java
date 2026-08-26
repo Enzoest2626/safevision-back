@@ -30,12 +30,15 @@ public class HttpRulesPublisher implements RulesPublisherPort {
     private final WebClient webClient;
     private final CameraRepositoryPort cameraRepository;
     private final int webhookPort;
+    private final Duration webhookTimeout;
 
     public HttpRulesPublisher(WebClient.Builder webClientBuilder, CameraRepositoryPort cameraRepository,
-                               @Value("${app.cv.webhook-port:5001}") int webhookPort) {
+                               @Value("${app.cv.webhook-port:5001}") int webhookPort,
+                               @Value("${app.cv.webhook-timeout-seconds:5}") long webhookTimeoutSeconds) {
         this.webClient = webClientBuilder.build();
         this.cameraRepository = cameraRepository;
         this.webhookPort = webhookPort;
+        this.webhookTimeout = Duration.ofSeconds(webhookTimeoutSeconds);
     }
 
     @Override
@@ -53,7 +56,7 @@ public class HttpRulesPublisher implements RulesPublisherPort {
                 .bodyValue(Map.of("required_epp", requiredEppCodes))
                 .retrieve()
                 .toBodilessEntity()
-                .timeout(Duration.ofSeconds(5))
+                .timeout(webhookTimeout)
                 .doOnSuccess(response -> log.info(
                         "Reglas EPP notificadas al CV | uri={} | required_epp={}", uri, requiredEppCodes))
                 .onErrorResume(ex -> {

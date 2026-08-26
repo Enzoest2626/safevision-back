@@ -1,6 +1,5 @@
 package com.safevision.back.infrastructure.notification;
 
-
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.safevision.back.domain.model.Camera;
@@ -30,7 +29,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
-@DisplayName("TelegramNotificationService — benchmark reproducible HU10")
+@DisplayName("TelegramNotificationService — benchmark reproducible")
 class TelegramNotificationPerformanceTest {
 
     private static final int WARMUP_ITERATIONS = 100;
@@ -139,20 +138,20 @@ class TelegramNotificationPerformanceTest {
         Files.createDirectories(outputDir);
         String json = String.format(Locale.ROOT,
                 "{\n"
-                        + "  \"flow\": \"Backend -> Telegram API\",\n"
-                        + "  \"environment\": \"JDK %s, local JDK HttpServer\",\n"
-                        + "  \"warmupIterations\": %d,\n"
-                        + "  \"measuredIterations\": %d,\n"
-                        + "  \"concurrency\": %d,\n"
-                        + "  \"minimumMs\": %.3f,\n"
-                        + "  \"averageMs\": %.3f,\n"
-                        + "  \"medianMs\": %.3f,\n"
-                        + "  \"p95Ms\": %.3f,\n"
-                        + "  \"p99Ms\": %.3f,\n"
-                        + "  \"maximumMs\": %.3f,\n"
-                        + "  \"standardDeviationMs\": %.3f,\n"
-                        + "  \"thresholdMs\": %d,\n"
-                        + "  \"status\": \"%s\"\n"
+                        + " \"flow\": \"Backend -> Telegram API\",\n"
+                        + " \"environment\": \"JDK %s, local JDK HttpServer\",\n"
+                        + " \"warmupIterations\": %d,\n"
+                        + " \"measuredIterations\": %d,\n"
+                        + " \"concurrency\": %d,\n"
+                        + " \"minimumMs\": %.3f,\n"
+                        + " \"averageMs\": %.3f,\n"
+                        + " \"medianMs\": %.3f,\n"
+                        + " \"p95Ms\": %.3f,\n"
+                        + " \"p99Ms\": %.3f,\n"
+                        + " \"maximumMs\": %.3f,\n"
+                        + " \"standardDeviationMs\": %.3f,\n"
+                        + " \"thresholdMs\": %d,\n"
+                        + " \"status\": \"%s\"\n"
                         + "}\n",
                 System.getProperty("java.version"), WARMUP_ITERATIONS, MEASURED_ITERATIONS,
                 CONCURRENCY, statistics.minimumMs(), statistics.averageMs(), statistics.medianMs(),

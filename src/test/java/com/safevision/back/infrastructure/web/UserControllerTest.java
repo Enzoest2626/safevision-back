@@ -40,7 +40,12 @@ class UserControllerTest {
 
     @BeforeEach
     void setUp() {
-        client = WebTestClient.bindToController(new UserController(service)).build();
+        client = WebTestClient.bindToController(new UserController(service))
+                .webFilter((exchange, chain) -> {
+                    exchange.getAttributes().put("username", "supervisor1");
+                    return chain.filter(exchange);
+                })
+                .build();
         sampleResponse = new UserResponse(1L, "jperez", "jperez@safevision.com", 1L, "SUPERVISOR", "999999999",
                 true, LocalDateTime.now(), "system", LocalDateTime.now(), "system");
     }
@@ -50,7 +55,7 @@ class UserControllerTest {
     void findAll_retorna200() {
         when(service.findAll()).thenReturn(Flux.just(sampleResponse));
 
-        client.get().uri("/api/v1/users")
+        client.get().uri("/users")
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody(new ParameterizedTypeReference<ApiEnvelope<List<UserResponse>>>() {})
@@ -62,7 +67,7 @@ class UserControllerTest {
     void findById_existente_retorna200() {
         when(service.findById(1L)).thenReturn(Mono.just(sampleResponse));
 
-        client.get().uri("/api/v1/users/{id}", 1L)
+        client.get().uri("/users/{id}", 1L)
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody(new ParameterizedTypeReference<ApiEnvelope<UserResponse>>() {});
@@ -74,7 +79,7 @@ class UserControllerTest {
         when(service.findById(99L)).thenReturn(Mono.error(
                 new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found")));
 
-        client.get().uri("/api/v1/users/{id}", 99L)
+        client.get().uri("/users/{id}", 99L)
                 .exchange()
                 .expectStatus().isNotFound();
     }
@@ -84,8 +89,7 @@ class UserControllerTest {
     void create_retorna201() {
         when(service.create(any(UserRequest.class), anyString())).thenReturn(Mono.just(sampleResponse));
 
-        client.post().uri("/api/v1/users")
-                .header("X-Username", "admin1")
+        client.post().uri("/users")
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(new UserRequest("jperez", "jperez@safevision.com", "password123", "SUPERVISOR", "999999999"))
                 .exchange()
@@ -95,8 +99,7 @@ class UserControllerTest {
     @Test
     @DisplayName("POST /api/v1/users con email inválido retorna 400 (validación @Email)")
     void create_emailInvalido_retorna400() {
-        client.post().uri("/api/v1/users")
-                .header("X-Username", "admin1")
+        client.post().uri("/users")
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(new UserRequest("jperez", "no-es-un-email", "password123", "SUPERVISOR", "999999999"))
                 .exchange()
@@ -108,8 +111,7 @@ class UserControllerTest {
     void update_retorna200() {
         when(service.update(anyLong(), any(UserRequest.class), anyString())).thenReturn(Mono.just(sampleResponse));
 
-        client.put().uri("/api/v1/users/{id}", 1L)
-                .header("X-Username", "admin1")
+        client.put().uri("/users/{id}", 1L)
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(new UserRequest("jperez", "jperez@safevision.com", "password123", "SUPERVISOR", "999999999"))
                 .exchange()
@@ -121,8 +123,7 @@ class UserControllerTest {
     void delete_retorna200() {
         when(service.delete(anyLong(), anyString())).thenReturn(Mono.empty());
 
-        client.delete().uri("/api/v1/users/{id}", 1L)
-                .header("X-Username", "admin1")
+        client.delete().uri("/users/{id}", 1L)
                 .exchange()
                 .expectStatus().isOk();
     }

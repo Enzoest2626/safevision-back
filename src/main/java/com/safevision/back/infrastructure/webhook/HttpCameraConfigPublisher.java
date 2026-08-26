@@ -31,11 +31,14 @@ public class HttpCameraConfigPublisher implements CameraConfigPublisherPort {
 
     private final WebClient webClient;
     private final int webhookPort;
+    private final Duration webhookTimeout;
 
     public HttpCameraConfigPublisher(WebClient.Builder webClientBuilder,
-                                      @Value("${app.cv.webhook-port:5001}") int webhookPort) {
+                                      @Value("${app.cv.webhook-port:5001}") int webhookPort,
+                                      @Value("${app.cv.webhook-timeout-seconds:5}") long webhookTimeoutSeconds) {
         this.webClient = webClientBuilder.build();
         this.webhookPort = webhookPort;
+        this.webhookTimeout = Duration.ofSeconds(webhookTimeoutSeconds);
     }
 
     @Override
@@ -56,7 +59,7 @@ public class HttpCameraConfigPublisher implements CameraConfigPublisherPort {
                 .bodyValue(payload)
                 .retrieve()
                 .toBodilessEntity()
-                .timeout(Duration.ofSeconds(5))
+                .timeout(webhookTimeout)
                 .doOnSuccess(response -> log.info(
                         "Config de cámara notificada al CV | uri={} | rtsp_url={} | active={}",
                         uri, camera.rtspUrl(), camera.active()))

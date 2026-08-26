@@ -40,7 +40,7 @@ class AuthControllerTest {
         LoginResponse response = new LoginResponse("jwt-token-value", "Bearer", 28800L, "jperez", "SUPERVISOR");
         when(service.login(any(LoginRequest.class))).thenReturn(Mono.just(response));
 
-        client.post().uri("/api/v1/auth/login")
+        client.post().uri("/auth/login")
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(new LoginRequest("jperez", "correct-password"))
                 .exchange()
@@ -54,7 +54,7 @@ class AuthControllerTest {
         when(service.login(any(LoginRequest.class))).thenReturn(
                 Mono.error(new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid username or password")));
 
-        client.post().uri("/api/v1/auth/login")
+        client.post().uri("/auth/login")
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(new LoginRequest("jperez", "wrong-password"))
                 .exchange()
@@ -64,7 +64,7 @@ class AuthControllerTest {
     @Test
     @DisplayName("POST /api/v1/auth/login sin username retorna 400 (validación @NotBlank)")
     void login_sinUsername_retorna400() {
-        client.post().uri("/api/v1/auth/login")
+        client.post().uri("/auth/login")
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(new LoginRequest("", "correct-password"))
                 .exchange()

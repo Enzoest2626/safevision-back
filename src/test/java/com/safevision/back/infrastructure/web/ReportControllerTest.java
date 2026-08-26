@@ -25,7 +25,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 @ExtendWith(MockitoExtension.class)
-@DisplayName("ReportController — HTTP (HU12)")
+@DisplayName("ReportController — HTTP")
 class ReportControllerTest {
 
     @Mock
@@ -50,7 +50,7 @@ class ReportControllerTest {
     void get_sinFiltros_retorna200() {
         when(service.buildReport(isNull(), isNull(), isNull())).thenReturn(Mono.just(sampleResult()));
 
-        client.get().uri("/api/v1/reports")
+        client.get().uri("/reports")
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody(new ParameterizedTypeReference<ApiEnvelope<ReportResult>>() {})
@@ -66,7 +66,7 @@ class ReportControllerTest {
         when(service.buildReport(eq(7L), any(LocalDateTime.class), any(LocalDateTime.class)))
                 .thenReturn(Mono.just(sampleResult()));
 
-        client.get().uri("/api/v1/reports?siteId=7&from=2026-08-01T00:00:00&to=2026-08-07T23:59:00")
+        client.get().uri("/reports?siteId=7&from=2026-08-01T00:00:00&to=2026-08-07T23:59:00")
                 .exchange()
                 .expectStatus().isOk();
 

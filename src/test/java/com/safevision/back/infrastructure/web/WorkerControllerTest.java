@@ -40,7 +40,12 @@ class WorkerControllerTest {
 
     @BeforeEach
     void setUp() {
-        client = WebTestClient.bindToController(new WorkerController(service)).build();
+        client = WebTestClient.bindToController(new WorkerController(service))
+                .webFilter((exchange, chain) -> {
+                    exchange.getAttributes().put("username", "supervisor1");
+                    return chain.filter(exchange);
+                })
+                .build();
         sampleResponse = new WorkerResponse(1L, 10L, 3, "Juan", "Perez", "Albañil",
                 true, LocalDateTime.now(), "system", LocalDateTime.now(), "system");
     }
@@ -50,7 +55,7 @@ class WorkerControllerTest {
     void findAll_retorna200() {
         when(service.findAll()).thenReturn(Flux.just(sampleResponse));
 
-        client.get().uri("/api/v1/workers")
+        client.get().uri("/workers")
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody(new ParameterizedTypeReference<ApiEnvelope<List<WorkerResponse>>>() {})
@@ -62,7 +67,7 @@ class WorkerControllerTest {
     void findById_existente_retorna200() {
         when(service.findById(1L)).thenReturn(Mono.just(sampleResponse));
 
-        client.get().uri("/api/v1/workers/{id}", 1L)
+        client.get().uri("/workers/{id}", 1L)
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody(new ParameterizedTypeReference<ApiEnvelope<WorkerResponse>>() {});
@@ -74,7 +79,7 @@ class WorkerControllerTest {
         when(service.findById(99L)).thenReturn(Mono.error(
                 new ResponseStatusException(HttpStatus.NOT_FOUND, "Worker not found")));
 
-        client.get().uri("/api/v1/workers/{id}", 99L)
+        client.get().uri("/workers/{id}", 99L)
                 .exchange()
                 .expectStatus().isNotFound();
     }
@@ -84,8 +89,7 @@ class WorkerControllerTest {
     void create_retorna201() {
         when(service.create(any(WorkerRequest.class), anyString())).thenReturn(Mono.just(sampleResponse));
 
-        client.post().uri("/api/v1/workers")
-                .header("X-Username", "supervisor1")
+        client.post().uri("/workers")
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(new WorkerRequest(10L, 3, "Juan", "Perez", "Albañil"))
                 .exchange()
@@ -97,8 +101,7 @@ class WorkerControllerTest {
     void update_retorna200() {
         when(service.update(anyLong(), any(WorkerRequest.class), anyString())).thenReturn(Mono.just(sampleResponse));
 
-        client.put().uri("/api/v1/workers/{id}", 1L)
-                .header("X-Username", "supervisor1")
+        client.put().uri("/workers/{id}", 1L)
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(new WorkerRequest(10L, 3, "Juan", "Perez", "Albañil"))
                 .exchange()
@@ -110,8 +113,7 @@ class WorkerControllerTest {
     void delete_retorna200() {
         when(service.delete(anyLong(), anyString())).thenReturn(Mono.empty());
 
-        client.delete().uri("/api/v1/workers/{id}", 1L)
-                .header("X-Username", "supervisor1")
+        client.delete().uri("/workers/{id}", 1L)
                 .exchange()
                 .expectStatus().isOk();
     }

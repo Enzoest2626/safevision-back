@@ -15,8 +15,8 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestAttribute;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
@@ -25,7 +25,7 @@ import reactor.core.publisher.Mono;
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/v1/users")
+@RequestMapping("/users")
 @Tag(name = "Users", description = "Gestión de usuarios del sistema")
 public class UserController {
 
@@ -45,7 +45,6 @@ public class UserController {
     @GetMapping("/{id}")
     @Operation(summary = "Detalle de usuario")
     @ApiResponse(responseCode = "200", description = "Usuario encontrado")
-    @ApiResponse(responseCode = "404", description = "Usuario no encontrado")
     public Mono<ApiEnvelope<UserResponse>> findById(@PathVariable Long id) {
         return ApiEnvelope.wrap(userService.findById(id), HttpStatus.OK);
     }
@@ -55,26 +54,24 @@ public class UserController {
     @Operation(summary = "Crear usuario", security = @SecurityRequirement(name = "bearerAuth"))
     @ApiResponse(responseCode = "201", description = "Usuario creado")
     public Mono<ApiEnvelope<UserResponse>> create(@Valid @RequestBody UserRequest request,
-                                     @RequestHeader(value = "X-Username", defaultValue = "system") String username) {
+                                     @RequestAttribute("username") String username) {
         return ApiEnvelope.wrap(userService.create(request, username), HttpStatus.CREATED);
     }
 
     @PutMapping("/{id}")
     @Operation(summary = "Actualizar usuario", security = @SecurityRequirement(name = "bearerAuth"))
     @ApiResponse(responseCode = "200", description = "Usuario actualizado")
-    @ApiResponse(responseCode = "404", description = "Usuario no encontrado")
     public Mono<ApiEnvelope<UserResponse>> update(@PathVariable Long id,
                                      @Valid @RequestBody UserRequest request,
-                                     @RequestHeader(value = "X-Username", defaultValue = "system") String username) {
+                                     @RequestAttribute("username") String username) {
         return ApiEnvelope.wrap(userService.update(id, request, username), HttpStatus.OK);
     }
 
     @DeleteMapping("/{id}")
     @Operation(summary = "Desactivar usuario (soft delete)", security = @SecurityRequirement(name = "bearerAuth"))
     @ApiResponse(responseCode = "200", description = "Usuario desactivado")
-    @ApiResponse(responseCode = "404", description = "Usuario no encontrado")
     public Mono<ApiEnvelope<Void>> delete(@PathVariable Long id,
-                             @RequestHeader(value = "X-Username", defaultValue = "system") String username) {
+                             @RequestAttribute("username") String username) {
         return ApiEnvelope.wrapVoid(userService.delete(id, username), HttpStatus.OK);
     }
 }

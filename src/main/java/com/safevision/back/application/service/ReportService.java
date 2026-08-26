@@ -11,7 +11,6 @@ import com.safevision.back.application.ports.out.ReportRepositoryPort;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 import reactor.util.function.Tuple2;
-import reactor.util.function.Tuple6;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -22,7 +21,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Orquesta HU12 (reportes): dispara las agregaciones de {@link ReportRepositoryPort}
+ * Orquesta los reportes: dispara las agregaciones de {@link ReportRepositoryPort}
  * en paralelo y arma el resultado. Todo lo que se ve acá sale de conteos reales
  * sobre incidents/sites/zones/workers/notifications — no hay número inventado.
  * "Cumplimiento %" queda deliberadamente fuera: el sistema solo registra
@@ -48,39 +47,38 @@ public class ReportService {
         long periodDays = ChronoUnit.DAYS.between(effectiveFrom.toLocalDate(), effectiveTo.toLocalDate()) + 1;
         LocalDateTime previousTo = effectiveFrom;
         LocalDateTime previousFrom = effectiveFrom.minusDays(periodDays);
+        LocalDate rangeStart = effectiveFrom.toLocalDate();
+        LocalDate rangeEnd = effectiveTo.toLocalDate();
 
-        Mono<Tuple6<Long, Long, List<CategoryCount>, List<CategoryCount>, List<DailyCount>, List<ZoneCount>>> group1 = Mono.zip(
+        Mono<RawAggregates> aggregates = Mono.zip(
                 reportRepo.countIncidents(siteId, effectiveFrom, effectiveTo),
                 reportRepo.countIncidents(siteId, previousFrom, previousTo),
                 reportRepo.countByEppType(siteId, effectiveFrom, effectiveTo).collectList(),
                 reportRepo.countBySite(siteId, effectiveFrom, effectiveTo).collectList(),
                 reportRepo.countByDay(siteId, effectiveFrom, effectiveTo).collectList(),
-                reportRepo.countByZone(siteId, effectiveFrom, effectiveTo).collectList());
+                reportRepo.countByZone(siteId, effectiveFrom, effectiveTo).collectList())
+                .map(t -> new RawAggregates(t.getT1(), t.getT2(), t.getT3(), t.getT4(),
+                        zeroFillDays(t.getT5(), rangeStart, rangeEnd), t.getT6()));
 
-        Mono<Tuple2<List<WorkerCount>, NotificationHealth>> group2 = Mono.zip(
+        Mono<Tuple2<List<WorkerCount>, NotificationHealth>> extras = Mono.zip(
                 reportRepo.topWorkers(siteId, effectiveFrom, effectiveTo, TOP_WORKERS_LIMIT).collectList(),
                 reportRepo.notificationHealth(siteId, effectiveFrom, effectiveTo));
 
-        LocalDate rangeStart = effectiveFrom.toLocalDate();
-        LocalDate rangeEnd = effectiveTo.toLocalDate();
+        return aggregates.zipWith(extras).map(combined -> {
+            RawAggregates agg = combined.getT1();
+            List<WorkerCount> topWorkers = combined.getT2().getT1();
+            NotificationHealth notifications = combined.getT2().getT2();
 
-        return group1.zipWith(group2).map(combined -> {
-            Tuple6<Long, Long, List<CategoryCount>, List<CategoryCount>, List<DailyCount>, List<ZoneCount>> g1 = combined.getT1();
-            Tuple2<List<WorkerCount>, NotificationHealth> g2 = combined.getT2();
-
-            long total = g1.getT1();
-            long previousTotal = g1.getT2();
-            List<CategoryCount> byEppType = g1.getT3();
-            List<CategoryCount> bySite = g1.getT4();
-            List<DailyCount> dailyTrend = zeroFillDays(g1.getT5(), rangeStart, rangeEnd);
-            List<ZoneCount> byZone = g1.getT6();
-            List<WorkerCount> topWorkers = g2.getT1();
-            NotificationHealth notifications = g2.getT2();
-
-            ReportSummary summary = buildSummary(total, previousTotal, bySite);
-            return new ReportResult(summary, byEppType, bySite, dailyTrend, byZone, topWorkers, notifications);
+            ReportSummary summary = buildSummary(agg.total(), agg.previousTotal(), agg.bySite());
+            return new ReportResult(summary, agg.byEppType(), agg.bySite(), agg.dailyTrend(), agg.byZone(),
+                    topWorkers, notifications);
         });
     }
+
+    /** Resultado crudo de las 6 agregaciones que se disparan en paralelo — reemplaza el Tuple6 posicional. */
+    private record RawAggregates(long total, long previousTotal, List<CategoryCount> byEppType,
+                                  List<CategoryCount> bySite, List<DailyCount> dailyTrend,
+                                  List<ZoneCount> byZone) {}
 
     private ReportSummary buildSummary(long total, long previousTotal, List<CategoryCount> bySite) {
         CategoryCount critical = bySite.stream().filter(c -> c.total() > 0).findFirst().orElse(null);

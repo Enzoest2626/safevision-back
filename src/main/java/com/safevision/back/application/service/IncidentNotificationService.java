@@ -25,7 +25,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * Resuelve los contactos de la obra, envía la alerta Telegram por incidente EPP (HU10)
+ * Resuelve los contactos de la obra, envía la alerta Telegram por incidente EPP
  * y registra el resultado (SENT/FAILED) en `notifications`. Extraído de IncidentService
  * para mantener ambas clases por debajo del límite de 150 líneas.
  */

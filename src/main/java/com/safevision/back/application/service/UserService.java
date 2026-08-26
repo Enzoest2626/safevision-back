@@ -3,6 +3,7 @@ package com.safevision.back.application.service;
 import com.safevision.back.application.ports.out.UserRepositoryPort;
 import com.safevision.back.application.ports.out.UserRoleRepositoryPort;
 import com.safevision.back.domain.model.User;
+import com.safevision.back.domain.model.UserRole;
 import com.safevision.back.infrastructure.web.dto.UserRequest;
 import com.safevision.back.infrastructure.web.dto.UserResponse;
 import org.springframework.http.HttpStatus;
@@ -40,9 +41,7 @@ public class UserService {
     }
 
     public Mono<UserResponse> create(UserRequest request, String createdBy) {
-        return userRoleRepository.findByCode(request.roleCode())
-                .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "Invalid role: " + request.roleCode())))
+        return resolveRole(request.roleCode())
                 .flatMap(role -> {
                     LocalDateTime now = LocalDateTime.now();
                     String hash = passwordEncoder.encode(request.password());
@@ -56,9 +55,7 @@ public class UserService {
         return userRepository.findById(id)
                 .filter(User::active)
                 .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found")))
-                .flatMap(existing -> userRoleRepository.findByCode(request.roleCode())
-                        .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                                "Invalid role: " + request.roleCode())))
+                .flatMap(existing -> resolveRole(request.roleCode())
                         .flatMap(role -> {
                             String hash = passwordEncoder.encode(request.password());
                             User updated = new User(
@@ -89,5 +86,11 @@ public class UserService {
 
     private Mono<UserResponse> withRoleCode(User user) {
         return userRoleRepository.findById(user.roleId()).map(role -> UserResponse.from(user, role.code()));
+    }
+
+    private Mono<UserRole> resolveRole(String roleCode) {
+        return userRoleRepository.findByCode(roleCode)
+                .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Invalid role: " + roleCode)));
     }
 }

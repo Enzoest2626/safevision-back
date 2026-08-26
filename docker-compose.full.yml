@@ -105,10 +105,13 @@ services:
       APP_ENV: ${APP_ENV:-dev}
       VIDEO_SOURCE: rtsp://mediamtx:8554/obra1
       # BACKEND_URL/CV_WEBHOOK_PORT reemplazan las variables MQTT_BROKER_* de
-      # antes — se terminan de ajustar cuando se migre el módulo CV a HTTP
-      # (ver CLAUDE.md, "Backend <-> CV por HTTP").
+      # antes (migración MQTT->HTTP, ver CLAUDE.md).
       BACKEND_URL: http://backend:8080
       CV_WEBHOOK_PORT: ${CV_WEBHOOK_PORT:-5001}
+      # Mismo token que valida `backend` (ver su propio bloque environment
+      # mas abajo) — sin este, POST /api/v1/cv/incidents(/clips) del CV
+      # sale sin Bearer y el backend lo rechaza con 401.
+      ALERT_SERVICE_TOKEN: ${ALERT_SERVICE_TOKEN:-dev-token}
       SITE_NAME: Obra-Principal
       CAMERA_ID: CAM-01
       COOLDOWN_SECONDS: "10"

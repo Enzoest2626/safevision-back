@@ -11,7 +11,7 @@ import reactor.core.publisher.Mono;
 import java.time.LocalDateTime;
 
 /**
- * Consultas de agregación para HU12 (reportes). No es un repositorio de
+ * Consultas de agregación para reportes. No es un repositorio de
  * Spring Data (no hay una entidad "reporte" que persistir) — es un puerto de
  * solo lectura implementado con DatabaseClient sobre incidents/sites/zones/
  * workers/notifications. siteId=null en cualquier método significa "todas

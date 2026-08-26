@@ -2,7 +2,6 @@ package com.safevision.back.application.service;
 
 import com.safevision.back.application.ports.out.CameraRepositoryPort;
 import com.safevision.back.application.ports.out.EvidenceRepositoryPort;
-import com.safevision.back.application.ports.out.EvidenceStoragePort;
 import com.safevision.back.application.ports.out.IncidentRepositoryPort;
 import com.safevision.back.application.ports.out.SiteRepositoryPort;
 import com.safevision.back.application.ports.out.WorkerRepositoryPort;
@@ -13,7 +12,6 @@ import com.safevision.back.domain.model.Site;
 import com.safevision.back.domain.model.Worker;
 import com.safevision.back.infrastructure.web.dto.CvClipReadyMessage;
 import com.safevision.back.infrastructure.web.dto.CvIncidentMessage;
-import com.safevision.back.infrastructure.web.dto.EvidenceResponse;
 import com.safevision.back.infrastructure.web.dto.IncidentRequest;
 import com.safevision.back.infrastructure.web.dto.IncidentResponse;
 import org.slf4j.Logger;
@@ -21,15 +19,15 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
-import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
 
 /**
- * Orquesta el registro de incidentes EPP (HU10): persiste incidente + evidencia
- * y delega la notificación de la obra a {@link IncidentNotificationService}.
+ * Orquesta la ingesta de incidentes EPP: persiste incidente + evidencia y
+ * delega la notificación de la obra a {@link IncidentNotificationService}.
+ * Las consultas de incidentes ya registrados viven en {@link IncidentQueryService}.
  */
 @Service
 public class IncidentService {
@@ -42,22 +40,19 @@ public class IncidentService {
     private final CameraRepositoryPort cameraRepo;
     private final SiteRepositoryPort siteRepo;
     private final IncidentNotificationService notificationService;
-    private final EvidenceStoragePort presignService;
 
     public IncidentService(IncidentRepositoryPort incidentRepo,
                             EvidenceRepositoryPort evidenceRepo,
                             WorkerRepositoryPort workerRepo,
                             CameraRepositoryPort cameraRepo,
                             SiteRepositoryPort siteRepo,
-                            IncidentNotificationService notificationService,
-                            EvidenceStoragePort presignService) {
+                            IncidentNotificationService notificationService) {
         this.incidentRepo = incidentRepo;
         this.evidenceRepo = evidenceRepo;
         this.workerRepo = workerRepo;
         this.cameraRepo = cameraRepo;
         this.siteRepo = siteRepo;
         this.notificationService = notificationService;
-        this.presignService = presignService;
     }
 
     public Mono<IncidentResponse> register(IncidentRequest request, String traceId) {
@@ -84,23 +79,9 @@ public class IncidentService {
                 }));
 
         return Mono.zip(workerMono, cameraMono, siteMono)
-                .flatMap(resolved -> {
-                    Worker worker = resolved.getT1();
-                    Camera camera = resolved.getT2();
-                    Site site = resolved.getT3();
-                    LocalDateTime now = LocalDateTime.now();
-                    Incident incident = new Incident(null, worker.id(), camera.id(), site.id(),
-                            UUID.randomUUID().toString(),
-                            request.missingEpp().toArray(new String[0]), request.timestamp(), now);
-
-                    return incidentRepo.save(incident)
-                            .doOnNext(saved -> log.info("Incidente persistido | trace_id={} id={} worker_id={} site_id={} camera_id={}",
-                                    traceId, saved.id(), saved.workerId(), saved.siteId(), saved.cameraId()))
-                            .flatMap(saved -> evidenceRepo.save(new Evidence(null, saved.id(), "PHOTO",
-                                            request.frameB64(), null, null, null, now))
-                                    .flatMap(evidence -> notificationService.notify(saved, camera, site, evidence, traceId)
-                                            .thenReturn(saved)));
-                })
+                .flatMap(resolved -> persistIncidentAndEvidence(resolved.getT1(), resolved.getT2(), resolved.getT3(),
+                        UUID.randomUUID().toString(), request.missingEpp().toArray(new String[0]),
+                        request.timestamp(), request.frameB64(), null, traceId))
                 .map(IncidentResponse::from);
     }
 
@@ -116,34 +97,42 @@ public class IncidentService {
                 traceId, message.incidentId(), message.workerCode(), message.cameraCode(), message.siteName());
 
         Mono<Worker> workerMono = workerRepo.findByCode(message.workerCode())
-                .switchIfEmpty(Mono.error(new IllegalArgumentException(
+                .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST,
                         "Worker desconocido: " + message.workerCode())));
         Mono<Camera> cameraMono = cameraRepo.findByCode(message.cameraCode())
-                .switchIfEmpty(Mono.error(new IllegalArgumentException(
+                .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST,
                         "Cámara desconocida: " + message.cameraCode())));
         Mono<Site> siteMono = siteRepo.findByName(message.siteName())
-                .switchIfEmpty(Mono.error(new IllegalArgumentException(
+                .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST,
                         "Obra desconocida: " + message.siteName())));
 
         return Mono.zip(workerMono, cameraMono, siteMono)
-                .flatMap(resolved -> {
-                    Worker worker = resolved.getT1();
-                    Camera camera = resolved.getT2();
-                    Site site = resolved.getT3();
-                    LocalDateTime now = LocalDateTime.now();
-                    Incident incident = new Incident(null, worker.id(), camera.id(), site.id(),
-                            message.incidentId(), message.missingEpp().toArray(new String[0]),
-                            message.timestamp(), now);
-
-                    return incidentRepo.save(incident)
-                            .doOnNext(saved -> log.info("Incidente del CV persistido | trace_id={} id={} external_id={}",
-                                    traceId, saved.id(), saved.externalId()))
-                            .flatMap(saved -> evidenceRepo.save(new Evidence(null, saved.id(), "PHOTO",
-                                            null, message.photoS3Key(), null, null, now))
-                                    .flatMap(evidence -> notificationService.notify(saved, camera, site, evidence, traceId)
-                                            .thenReturn(saved)));
-                })
+                .flatMap(resolved -> persistIncidentAndEvidence(resolved.getT1(), resolved.getT2(), resolved.getT3(),
+                        message.incidentId(), message.missingEpp().toArray(new String[0]),
+                        message.timestamp(), null, message.photoS3Key(), traceId))
                 .map(IncidentResponse::from);
+    }
+
+    /**
+     * Cola común de {@link #register} y {@link #registerFromCv}: arma y persiste
+     * el {@link Incident}, guarda su {@link Evidence} (foto inline o en S3, según
+     * cuál de los dos parámetros venga no nulo) y delega la notificación.
+     */
+    private Mono<Incident> persistIncidentAndEvidence(Worker worker, Camera camera, Site site, String externalId,
+                                                        String[] missingEpp, LocalDateTime occurredAt,
+                                                        String frameB64, String photoS3Key, String traceId) {
+        LocalDateTime now = LocalDateTime.now();
+        Incident incident = new Incident(null, worker.id(), camera.id(), site.id(),
+                externalId, missingEpp, occurredAt, now);
+
+        return incidentRepo.save(incident)
+                .doOnNext(saved -> log.info(
+                        "Incidente persistido | trace_id={} id={} external_id={} worker_id={} site_id={} camera_id={}",
+                        traceId, saved.id(), saved.externalId(), saved.workerId(), saved.siteId(), saved.cameraId()))
+                .flatMap(saved -> evidenceRepo.save(new Evidence(null, saved.id(), "PHOTO",
+                                frameB64, photoS3Key, null, null, now))
+                        .flatMap(evidence -> notificationService.notify(saved, camera, site, evidence, traceId)
+                                .thenReturn(saved)));
     }
 
     /**
@@ -153,7 +142,7 @@ public class IncidentService {
      */
     public Mono<Void> registerClipReady(CvClipReadyMessage message) {
         return incidentRepo.findByExternalId(message.incidentId())
-                .switchIfEmpty(Mono.error(new IllegalArgumentException(
+                .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST,
                         "Incidente desconocido para clip: external_id=" + message.incidentId())))
                 .flatMap(incident -> evidenceRepo.save(new Evidence(null, incident.id(), "VIDEO",
                         null, message.s3Key(), message.durationSeconds(), message.fileSizeBytes(),
@@ -161,34 +150,5 @@ public class IncidentService {
                 .doOnNext(evidence -> log.info("Clip de video registrado | incident_id={} storage_key={}",
                         message.incidentId(), message.s3Key()))
                 .then();
-    }
-
-    public Flux<IncidentResponse> findByFilter(Long siteId, Long workerId, LocalDateTime from, LocalDateTime to) {
-        LocalDateTime effectiveFrom = from != null ? from : LocalDateTime.of(2000, 1, 1, 0, 0);
-        LocalDateTime effectiveTo = to != null ? to : LocalDateTime.now();
-        return incidentRepo.findByFilter(siteId, workerId, effectiveFrom, effectiveTo)
-                .map(IncidentResponse::from);
-    }
-
-    public Mono<IncidentResponse> findById(Long id) {
-        return incidentRepo.findById(id)
-                .map(IncidentResponse::from)
-                .switchIfEmpty(Mono.defer(() -> {
-                    log.warn("Incidente no encontrado | id={}", id);
-                    return Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Incident not found"));
-                }));
-    }
-
-    /**
-     * Evidencia (foto/clip) de un incidente, con URL prefirmada de S3 cuando
-     * corresponde ({@code storageKey != null}) — {@code null} para filas
-     * legacy que solo tienen {@code frameB64} inline.
-     */
-    public Flux<EvidenceResponse> findEvidenceByIncidentId(Long incidentId) {
-        return incidentRepo.findById(incidentId)
-                .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Incident not found")))
-                .thenMany(Flux.defer(() -> evidenceRepo.findByIncidentId(incidentId)))
-                .map(evidence -> EvidenceResponse.from(evidence,
-                        evidence.storageKey() != null ? presignService.presignGetUrl(evidence.storageKey()) : null));
     }
 }

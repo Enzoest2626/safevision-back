@@ -1,6 +1,5 @@
 package com.safevision.back.infrastructure.notification;
 
-
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.safevision.back.domain.model.Camera;
@@ -27,7 +26,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * verificar ruta/método/manejo de error sin depender de la Bot API de Telegram.
  * El test de integración real está en TelegramNotificationServiceIntegrationTest.
  */
-@DisplayName("TelegramNotificationService — envío de alerta vía Bot API (HU10)")
+@DisplayName("TelegramNotificationService — envío de alerta vía Bot API")
 class TelegramNotificationServiceTest {
 
     private static final String FRAME_B64 = Base64.getEncoder().encodeToString("fake-jpeg-bytes".getBytes());

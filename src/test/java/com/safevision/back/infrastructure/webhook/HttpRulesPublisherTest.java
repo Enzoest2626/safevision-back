@@ -24,7 +24,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * Unitario (sin red real) — mockea el ExchangeFunction del WebClient para
  * verificar el fan-out por cámara sin depender de que el CV esté arriba.
  */
-@DisplayName("HttpRulesPublisher — notificación por HTTP de reglas EPP (HU04)")
+@DisplayName("HttpRulesPublisher — notificación por HTTP de reglas EPP")
 class HttpRulesPublisherTest {
 
     private static final Long SITE_ID = 1L;
@@ -37,7 +37,7 @@ class HttpRulesPublisherTest {
     private HttpRulesPublisher buildPublisher(CameraRepositoryPort cameraRepository,
                                                ExchangeFunction exchangeFunction) {
         WebClient.Builder builder = WebClient.builder().exchangeFunction(exchangeFunction);
-        return new HttpRulesPublisher(builder, cameraRepository, 5001);
+        return new HttpRulesPublisher(builder, cameraRepository, 5001, 5);
     }
 
     @Test
