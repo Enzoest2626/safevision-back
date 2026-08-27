@@ -13,10 +13,10 @@ import java.util.List;
  * Los nombres de campo respetan el contrato snake_case ya acordado con CV.
  */
 public record IncidentRequest(
-        @JsonProperty("worker_code") @NotNull Integer workerCode,
-        @JsonProperty("missing_epp") @NotEmpty List<String> missingEpp,
-        @NotNull LocalDateTime timestamp,
-        @JsonProperty("camera_code") @NotBlank String cameraCode,
-        @JsonProperty("site_name") @NotBlank String siteName,
-        @JsonProperty("frame_b64") @NotBlank String frameB64
+        @JsonProperty("worker_code") @NotNull(message = "worker_code es obligatorio") Integer workerCode,
+        @JsonProperty("missing_epp") @NotEmpty(message = "missing_epp no puede estar vacío") List<String> missingEpp,
+        @NotNull(message = "timestamp es obligatorio") LocalDateTime timestamp,
+        @JsonProperty("camera_code") @NotBlank(message = "camera_code es obligatorio") String cameraCode,
+        @JsonProperty("site_name") @NotBlank(message = "site_name es obligatorio") String siteName,
+        @JsonProperty("frame_b64") @NotBlank(message = "frame_b64 es obligatorio") String frameB64
 ) {}

@@ -5,6 +5,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.FieldError;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.bind.support.WebExchangeBindException;
@@ -34,10 +35,15 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(WebExchangeBindException.class)
     public Mono<ResponseEntity<ApiEnvelope<Void>>> handleValidation(WebExchangeBindException ex) {
+        // getDefaultMessage() ya es el texto pensado para el usuario final —
+        // cada DTO define su propio `message` en la anotación (ver
+        // infrastructure/web/dto/*Request.java). Sin field/regexp crudo acá:
+        // eso fue justamente el bug que se corrigió (ver CLAUDE.md).
         String description = ex.getFieldErrors().stream()
-                .map(fieldError -> fieldError.getField() + ": " + fieldError.getDefaultMessage())
+                .map(FieldError::getDefaultMessage)
+                .distinct()
                 .reduce((a, b) -> a + "; " + b)
-                .orElse("Validation failed");
+                .orElse("Los datos enviados no son válidos");
         return Mono.just(ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(ApiEnvelope.error(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", description)));
     }
