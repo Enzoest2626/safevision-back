@@ -80,7 +80,7 @@ src/main/java/com/safevision/back/
     ├── persistence/          ← 15 repos Spring Data `extends XRepositoryPort {}`
     ├── webhook/               ← HttpRulesPublisher, HttpCameraConfigPublisher — notifican
     │                            al CV por HTTP directo (camera.ipAddress), sin broker
-    ├── notification/          ← TelegramNotificationService
+    ├── notification/          ← TelegramNotificationService, TelegramLinkingPoller
     ├── storage/               ← EvidencePresignService (S3 URLs prefirmadas)
     └── config/                 ← OpenApiConfig, SecurityConfig, *Properties
 ```
@@ -306,7 +306,7 @@ SERVER_PORT=8080
 - Java 21: records, sealed classes, pattern matching.
 - Nombres en inglés (código y BD), comentarios en español.
 - Reactive first — cero `.block()`.
-- Cobertura tests >= 70% — verificado post-migración HTTP: 172 tests, 0 fallos, 1 omitido (JaCoCo).
+- Cobertura tests >= 70% — verificado: 190 tests (unitarios + `IncidentRepositoryIntegrationTest` con Testcontainers), 0 fallos, 1 omitido (JaCoCo).
 - `application/service/*` depende de interfaces (`application/ports/out/`), nunca de una clase concreta de `infrastructure/`.
 - Testcontainers en `pom.xml` pero sin tests de integración que lo usen todavía.
 - Endpoints documentados con `@Operation` / `@ApiResponse`.
@@ -335,11 +335,12 @@ prefirmada o bytes inline, login JWT (`POST /api/v1/auth/login`, público) con
 el resto de endpoints protegidos por `Authorization: Bearer <jwt>`, todas las
 respuestas envueltas en `ApiEnvelope<T>` (DELETE ahora 200, no 204),
 reportes agregados (`GET /api/v1/reports`, HU12, sin "% de cumplimiento" —
-ver arriba), Swagger, 172 tests unitarios, infraestructura AWS como código
-(dos stacks CloudFormation: el original HTTP y `safevision-stack-mqtt.yaml`,
-que sigue aprovisionando un mosquitto que ya no hace falta — deuda pendiente).
+ver arriba), vinculación de supervisores por Telegram vía código corto de
+6 dígitos + polling (`TelegramLinkingPoller`, sin webhook público — ver
+CLAUDE.md), Swagger, tests unitarios + de integración (Testcontainers, Postgres real
+contra la paginación de incidentes), infraestructura AWS como código
+(`infra/`, un solo stack CloudFormation HTTP, sin broker — el viejo
+`safevision-stack-mqtt.yaml` se eliminó).
 
-Pendiente: endpoint de notificaciones (lectura del historial), tests de
-integración con Testcontainers, autorización por rol (el claim `role` del
-JWT no se valida todavía en ningún endpoint), `infra/deploy.sh`/`README.md`/
-`safevision-stack-mqtt.yaml` actualizados para el stack HTTP sin broker.
+Pendiente: endpoint de notificaciones (lectura del historial), autorización
+por rol (el claim `role` del JWT no se valida todavía en ningún endpoint).

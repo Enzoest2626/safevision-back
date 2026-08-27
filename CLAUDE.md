@@ -254,7 +254,7 @@ construir la pantalla de gestión de usuarios del frontend).
 | POST   | `/api/v1/cv/incidents`          | HU10  | **Activo** — el CV manda el incidente con evidencia ya en S3 (`photo_s3_key`); Bearer token (`ALERT_SERVICE_TOKEN`) |
 | POST   | `/api/v1/cv/incidents/clips`    | HU10  | **Activo** — aviso de "clip listo" (llega minutos después, correlacionado por `incident_id`); mismo Bearer token |
 | POST   | `/api/v1/incidents`             | HU10  | **Legacy** — sin uso activo (payload con `frame_b64` inline, sin S3); sigue funcionando con el mismo Bearer token; se deja sin borrar por si hace falta volver atrás |
-| GET    | `/api/v1/incidents`             | HU10  | Lista incidentes (filtros opcionales: `siteId`, `workerId`, `from`, `to`) |
+| GET    | `/api/v1/incidents`             | HU10  | Lista **paginada** de incidentes (filtros opcionales: `siteId`, `workerId`, `from`, `to` — datetime ISO completo, con hora; `page` desde 1 default 1; `size` default 20, máximo 50). `data` es `{items, page, size, totalItems, totalPages}`, no un array plano |
 | GET    | `/api/v1/incidents/{id}`        | HU10  | Detalle de incidente                             |
 | GET    | `/api/v1/incidents/{id}/evidence` |     | Evidencia (foto/clip) del incidente, con URL de S3 prefirmada de corta duración |
 
@@ -407,6 +407,30 @@ HTTP propio en su mismo proceso (no un contenedor aparte) y reemplaza su
 `VIDEO_SOURCE` estático por el `rtsp_url` recibido — si `active=false`, deja
 de reintentar la conexión hasta que vuelva a activarse.
 
+### Vinculación de supervisores por Telegram (código corto + polling)
+
+Un `site_contact` sin `telegram_chat_id` recibe automáticamente un
+`telegram_link_code` (6 dígitos, `SecureRandom`) al crearse o editarse —
+`SiteContactService.create/update`. El frontend lo muestra en un popup con
+los pasos (`app/templates/supervisores.html`). El supervisor le manda un
+único mensaje `/start <código>` a `@safevision_epp_bot` (deep-link estándar
+de Telegram — un solo mensaje, no dos); `TelegramLinkingPoller`
+(`infrastructure/notification/`) hace short polling a `getUpdates` de la
+Bot API (mismo `TELEGRAM_BOT_TOKEN`, sin webhook público), extrae el
+código del mensaje (tolera `/start <código>`, `/start@bot <código>` o el
+código solo, sin `/start` — ver `TelegramLinkingPoller.extractLinkCode`) y
+lo compara contra `telegram_link_code` vía `SiteContactService.tryLinkByCode`;
+si matchea
+setea `telegram_chat_id` + limpia el código + responde por Telegram
+confirmando. Si no matchea, responde con un mensaje genérico. Intervalo
+parametrizable — `app.telegram.linking-poll-interval-ms`
+(`TELEGRAM_LINKING_POLL_INTERVAL_MS`), default 900000 ms (15 min). El
+offset de `getUpdates` se guarda en memoria (no en BD) — reprocesar un update viejo
+tras un reinicio es inofensivo (el código ya fue consumido y no matchea, o
+vuelve a linkear sin causar daño), así que no se justifica persistirlo
+todavía. El camino manual (pegar el `telegram_chat_id` a mano al crear/editar
+el contacto) sigue existiendo — si viene en el request, no se genera código.
+
 ---
 
 ## Esquema de Base de Datos
@@ -558,19 +582,22 @@ CREATE TABLE notifications (
 );
 
 -- Contactos por obra — reciben alertas Telegram al detectarse un incidente.
+-- telegram_link_code: código de 6 dígitos generado si no vino telegram_chat_id
+-- (ver sección "Vinculación de supervisores por Telegram" más arriba).
 -- Fallback: si la obra no tiene contactos con telegram_chat_id, se usa
 -- TELEGRAM_CHAT_ID del entorno.
 CREATE TABLE site_contacts (
-    id               BIGINT       PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-    site_id          BIGINT       NOT NULL REFERENCES sites(id),
-    name             VARCHAR(100) NOT NULL,
-    phone            VARCHAR(20)  NOT NULL,
-    telegram_chat_id VARCHAR(100),
-    active           BOOLEAN      NOT NULL DEFAULT TRUE,
-    created_at       TIMESTAMP    NOT NULL DEFAULT NOW(),
-    created_by       VARCHAR(100),
-    updated_at       TIMESTAMP    NOT NULL DEFAULT NOW(),
-    updated_by       VARCHAR(100)
+    id                 BIGINT       PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    site_id            BIGINT       NOT NULL REFERENCES sites(id),
+    name               VARCHAR(100) NOT NULL,
+    phone              VARCHAR(20)  NOT NULL,
+    telegram_chat_id   VARCHAR(100),
+    telegram_link_code VARCHAR(10),
+    active             BOOLEAN      NOT NULL DEFAULT TRUE,
+    created_at         TIMESTAMP    NOT NULL DEFAULT NOW(),
+    created_by         VARCHAR(100),
+    updated_at         TIMESTAMP    NOT NULL DEFAULT NOW(),
+    updated_by         VARCHAR(100)
 );
 
 -- Catálogo EPP (tipos disponibles en el sistema)
@@ -649,6 +676,7 @@ SPRING_R2DBC_PASSWORD=
 # Telegram Bot
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHAT_ID=
+TELEGRAM_LINKING_POLL_INTERVAL_MS=900000   # Intervalo del polling de vinculación (TelegramLinkingPoller), default 15 min
 
 # Seguridad
 ALERT_SERVICE_TOKEN=    # Bearer token que valida el módulo CV (endpoints /api/v1/incidents y /api/v1/cv/**)
@@ -681,14 +709,6 @@ Usar perfiles: `application-dev.yml`, `application-prd.yml`.
 | Evidencia    | AWS S3 (bucket nuevo)  | Foto+clip subidos por el CV, lifecycle 60 días |
 | Secretos     | AWS Secrets Manager   | Tokens, credenciales de BD            |
 | CI/CD        | GitHub Actions        | Build → Test → Deploy                  |
-
-> **Pendiente:** `infra/cloudformation/safevision-stack-mqtt.yaml` todavía
-> aprovisiona un contenedor `mosquitto` (systemd unit) que ya no hace falta
-> — se sacó de `docker-compose*.yml` (desarrollo local) pero el
-> CloudFormation real para AWS no se actualizó todavía; queda documentado
-> como deuda, igual que `infra/deploy.sh`/`infra/README.md` (que documentan
-> el flujo del stack original, `safevision-stack.yaml`, sin relación con
-> esto).
 
 ---
 
@@ -773,10 +793,12 @@ feat(setup): inicializa proyecto con dependencias y configuración base
 
 - Framework: JUnit 5 + Mockito + StepVerifier (reactivos).
 - Cobertura mínima: **70%** en `src/main/` — verificado con JaCoCo (`mvn test`, reporte en `target/site/jacoco/`).
-- **Estado verificado (post-migración HTTP CV<->Backend):** 172 tests, 0 fallos, 0 errores, 1 omitido.
-- Tests actuales son unitarios (controller con `WebTestClient` + Mockito, service con StepVerifier/Mockito) y espejan la estructura de `src/main/` 1:1 bajo `src/test/`.
-- `Testcontainers` está en `pom.xml` pero **aún no hay tests de integración que lo usen** — pendiente antes de cerrar esa parte del checklist.
-- Mocks para Telegram en tests unitarios (`TelegramNotificationServiceTest`, `TelegramNotificationPerformanceTest`) — `TelegramNotificationService` recibe `WebClient.Builder` inyectado en vez de construir su propio `WebClient`, para poder mockear el `ExchangeFunction` sin llamadas HTTP reales. Mismo patrón en `HttpRulesPublisherTest`/`HttpCameraConfigPublisherTest`.
+- **Estado verificado (post-paginación de incidentes + Testcontainers):** 190 tests, 0 fallos, 0 errores, 1 omitido.
+- La inmensa mayoría son unitarios (controller con `WebTestClient` + Mockito, service con StepVerifier/Mockito) y espejan la estructura de `src/main/` 1:1 bajo `src/test/`.
+- `Testcontainers` (`org.testcontainers:testcontainers-junit-jupiter`/`testcontainers-postgresql`/`testcontainers-r2dbc`, v2.0.2 — la línea 1.x no soporta motores Docker recientes con `MinAPIVersion` ≥ 1.41, ver nota en `IncidentRepositoryIntegrationTest`) tiene un primer uso real:
+  `IncidentRepositoryIntegrationTest` levanta un `PostgreSQLContainer` real, carga el schema desde `docs/init-schema.sql` (única fuente de verdad, sin copia paralela en `test/resources`) vía JDBC (`org.postgresql:postgresql`, dependencia de test — la app en sí sigue 100% R2DBC) y verifica `findByFilterPaged`/`countByFilter`
+  (`IncidentRepositoryPort`): el SQL crudo con `LIMIT`/`OFFSET` y filtros opcionales que un repositorio mockeado no puede probar. Corre con `@SpringBootTest` + `@ActiveProfiles("dev")` — el `application.yml` de test (sin perfil activo, pensado para tests unitarios que no levantan contexto completo) no trae `s3.*`/`telegram.*`, necesarios para que el `ApplicationContext` arranque entero.
+- Mocks para Telegram en tests unitarios (`TelegramNotificationServiceTest`, `TelegramNotificationPerformanceTest`, `TelegramLinkingPollerTest`) — `TelegramNotificationService`/`TelegramLinkingPoller` reciben `WebClient.Builder` inyectado en vez de construir su propio `WebClient`, para poder mockear el `ExchangeFunction` sin llamadas HTTP reales. Mismo patrón en `HttpRulesPublisherTest`/`HttpCameraConfigPublisherTest`.
 - `EvidencePresignServiceTest` mockea `S3Presigner` (AWS SDK) directamente — sin bucket real.
 
 ---
@@ -823,14 +845,21 @@ feat(setup): inicializa proyecto con dependencias y configuración base
 - [x] Login JWT (`POST /api/v1/auth/login`, público) — `AuthService`/`AuthController`/`JwtService`; el resto de endpoints exige `Authorization: Bearer <jwt>` vía `SecurityConfig.jwtAuthFilter` (2026-08-15)
 - [ ] Autorización por rol (ADMIN/SUPERVISOR) — el JWT lleva el claim `role`, pero ningún endpoint lo verifica todavía; hoy cualquier JWT válido pasa
 - [x] Todas las respuestas envueltas en `ApiEnvelope<T>` (`{status, datetime, error, data}` / `{..., errorCode, errorDescription}`) — ver sección [Formato de Respuesta](#formato-de-respuesta--apienvelopet-2026-08-15); DELETE pasó de 204 a 200
-- [x] Tests unitarios — 172 tests, 0 fallos, 1 omitido (verificado
-      post-migración HTTP, `./mvnw verify`, incluye `JwtServiceTest`/
-      `AuthServiceTest`/`AuthControllerTest`, los 9 `*ControllerTest` del
-      envelope, `ReportServiceTest`/`ReportControllerTest` de HU12, y
-      `HttpRulesPublisherTest`/`HttpCameraConfigPublisherTest`/
-      `CvIngestControllerTest`, este último fusionado en
-      `IncidentControllerTest` — ver bullet de ingesta más abajo)
-- [ ] Tests de integración Testcontainers — dependencia agregada, sin tests que la usen aún
+- [x] Tests — 190 tests, 0 fallos, 1 omitido (verificado con
+      `./mvnw verify`, incluye `JwtServiceTest`/`AuthServiceTest`/
+      `AuthControllerTest`, los 9 `*ControllerTest` del envelope,
+      `ReportServiceTest`/`ReportControllerTest` de HU12,
+      `HttpRulesPublisherTest`/`HttpCameraConfigPublisherTest`, y
+      `IncidentRepositoryIntegrationTest` (Testcontainers, ver sección
+      Testing)
+- [x] Vinculación de supervisores por Telegram vía código corto + polling
+      (`TelegramLinkingPoller`, `SiteContactService.tryLinkByCode`) — ver
+      sección "Vinculación de supervisores por Telegram" más arriba; el
+      camino manual (pegar `telegram_chat_id`) sigue existiendo como
+      fallback. Sin envío por WhatsApp/correo — evaluado y descartado por
+      ahora (WhatsApp Business API exige verificación de negocio en Meta y
+      plantillas pre-aprobadas, desproporcionado para el alcance de la tesis)
+- [x] Tests de integración Testcontainers — `IncidentRepositoryIntegrationTest` (Postgres real vía `PostgreSQLContainer`, schema cargado desde `docs/init-schema.sql`) verifica `findByFilterPaged`/`countByFilter`, el SQL crudo con LIMIT/OFFSET que un repositorio mockeado no puede probar
 - [x] Infraestructura como código (CloudFormation) — RDS + 2 EC2 (backend, CV), bootstrap 100% automático vía UserData, pull de imágenes Docker desde ECR (`infra/`); pensada para crearse/borrarse por sesión de demo
 - [x] Checkstyle + SpotBugs + Spotless integrados al build (no bloquean, `failOnViolation=false`)
 - [x] Arquitectura hexagonal adoptada — `domain/`, `application/` (services + ports), `infrastructure/` (web, persistence, webhook, notification, storage, config)
@@ -839,4 +868,4 @@ feat(setup): inicializa proyecto con dependencias y configuración base
 - [x] Evidencia (foto+clip) en S3, subida por el CV — backend solo genera URLs prefirmadas (`EvidencePresignService`) para Telegram y el endpoint `GET /api/v1/incidents/{id}/evidence`
 - [x] `incidents.external_id` — correlaciona el aviso de clip (llega después) con el incidente ya persistido
 - [x] Obras/zonas/cámaras con `code` inmutable (autogenerado o validado contra duplicados) — identificador de negocio estable que el CV manda en cada evento
-- [ ] `infra/deploy.sh` / `infra/README.md` / `infra/cloudformation/safevision-stack-mqtt.yaml` actualizados para el stack HTTP (sin mosquitto) — pendiente, documentado como deuda
+- [x] `infra/cloudformation/safevision-stack-mqtt.yaml` (CloudFormation viejo, seguía aprovisionando un `mosquitto` que ya no hacía falta) eliminado — `infra/deploy.sh`/`infra/README.md` ya apuntaban únicamente a `safevision-stack.yaml` (el stack HTTP sin broker), no hacía falta tocarlos
