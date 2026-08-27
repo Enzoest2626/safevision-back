@@ -54,7 +54,7 @@ class HttpRulesPublisherTest {
         };
         HttpRulesPublisher publisher = buildPublisher(cameraRepository, exchangeFunction);
 
-        publisher.publishRules(SITE_ID, List.of("casco", "chaleco"));
+        publisher.publishRules(SITE_ID, List.of("casco", "chaleco"), 45);
 
         assertThat(capturedRequests).hasSize(1);
         assertThat(capturedRequests.get(0).method().name()).isEqualTo("POST");
@@ -70,6 +70,6 @@ class HttpRulesPublisherTest {
         HttpRulesPublisher publisher = buildPublisher(cameraRepository, exchangeFunction);
 
         assertThat(org.assertj.core.api.Assertions.catchThrowable(() ->
-                publisher.publishRules(SITE_ID, List.of("casco")))).isNull();
+                publisher.publishRules(SITE_ID, List.of("casco"), 60))).isNull();
     }
 }

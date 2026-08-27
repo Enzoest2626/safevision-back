@@ -31,7 +31,7 @@ class SiteServiceTest {
 
     private SiteService service;
 
-    private final Site site = new Site(1L, "OBRA-A", "Main-Site", "Lima", true,
+    private final Site site = new Site(1L, "OBRA-A", "Main-Site", "Lima", 60, true,
             LocalDateTime.now(), "system", LocalDateTime.now(), "system");
 
     private final SiteRequest request = new SiteRequest("OBRA-A", "Main-Site", "Lima");

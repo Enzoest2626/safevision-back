@@ -15,6 +15,9 @@ import java.time.LocalDateTime;
 @Service
 public class SiteService {
 
+    /** Mismo default que {@code ComplianceTracker.DEFAULT_COOLDOWN_SECONDS} en el CV. */
+    private static final int DEFAULT_COOLDOWN_SECONDS = 60;
+
     private final SiteRepositoryPort siteRepository;
 
     public SiteService(SiteRepositoryPort siteRepository) {
@@ -36,8 +39,8 @@ public class SiteService {
         LocalDateTime now = LocalDateTime.now();
         return resolveCode(request.code())
                 .flatMap(code -> {
-                    Site site = new Site(null, code, request.name(), request.location(), true, now, createdBy, now,
-                            createdBy);
+                    Site site = new Site(null, code, request.name(), request.location(), DEFAULT_COOLDOWN_SECONDS,
+                            true, now, createdBy, now, createdBy);
                     return siteRepository.save(site);
                 })
                 .map(SiteResponse::from);
@@ -49,7 +52,8 @@ public class SiteService {
                 .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Site not found")))
                 .flatMap(existing -> {
                     Site updated = new Site(
-                            existing.id(), existing.code(), request.name(), request.location(), true,
+                            existing.id(), existing.code(), request.name(), request.location(),
+                            existing.cooldownSeconds(), true,
                             existing.createdAt(), existing.createdBy(),
                             LocalDateTime.now(), updatedBy
                     );
@@ -64,7 +68,8 @@ public class SiteService {
                 .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Site not found")))
                 .flatMap(existing -> {
                     Site deactivated = new Site(
-                            existing.id(), existing.code(), existing.name(), existing.location(), false,
+                            existing.id(), existing.code(), existing.name(), existing.location(),
+                            existing.cooldownSeconds(), false,
                             existing.createdAt(), existing.createdBy(),
                             LocalDateTime.now(), updatedBy
                     );

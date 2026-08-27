@@ -38,7 +38,7 @@ class TelegramNotificationServiceIntegrationTest {
 
     private final Camera camera = new Camera(20L, 1L, null, "CAM-01", "Entrada", "10.0.0.5", null,
             true, LocalDateTime.now(), "system", LocalDateTime.now(), "system");
-    private final Site site = new Site(1L, "OBRA-1", "Main-Site", "Lima", true,
+    private final Site site = new Site(1L, "OBRA-1", "Main-Site", "Lima", 60, true,
             LocalDateTime.now(), "system", LocalDateTime.now(), "system");
 
     private TelegramNotificationService buildService() {

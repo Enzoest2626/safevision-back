@@ -11,6 +11,7 @@ public record Site(
         String code,
         String name,
         String location,
+        Integer cooldownSeconds,
         boolean active,
         LocalDateTime createdAt,
         String createdBy,

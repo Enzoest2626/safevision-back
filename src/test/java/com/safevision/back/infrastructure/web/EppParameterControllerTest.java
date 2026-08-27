@@ -52,7 +52,8 @@ class EppParameterControllerTest {
                 List.of(
                         new EppParameterResponse.EppItem(1L, "casco", "Casco de seguridad"),
                         new EppParameterResponse.EppItem(2L, "chaleco", "Chaleco reflectivo")
-                )
+                ),
+                60
         );
     }
 
@@ -88,7 +89,7 @@ class EppParameterControllerTest {
 
         client.put().uri("/parameters/{siteId}", SITE_ID)
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue("{\"requiredEpp\":[\"casco\",\"chaleco\"]}")
+                .bodyValue("{\"requiredEpp\":[\"casco\",\"chaleco\"],\"cooldownSeconds\":60}")
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody(new ParameterizedTypeReference<ApiEnvelope<EppParameterResponse>>() {})
@@ -109,7 +110,7 @@ class EppParameterControllerTest {
     void put_listaVacia_retorna400() {
         client.put().uri("/parameters/{siteId}", SITE_ID)
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue("{\"requiredEpp\":[]}")
+                .bodyValue("{\"requiredEpp\":[],\"cooldownSeconds\":60}")
                 .exchange()
                 .expectStatus().isBadRequest()
                 .expectBody()
@@ -121,6 +122,16 @@ class EppParameterControllerTest {
     }
 
     @Test
+    @DisplayName("PUT con cooldownSeconds invalido (0) retorna 400 (validación @Min)")
+    void put_cooldownInvalido_retorna400() {
+        client.put().uri("/parameters/{siteId}", SITE_ID)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"requiredEpp\":[\"casco\"],\"cooldownSeconds\":0}")
+                .exchange()
+                .expectStatus().isBadRequest();
+    }
+
+    @Test
     @DisplayName("PUT con EPP inexistente retorna 400 (servicio valida contra catálogo)")
     void put_eppInexistente_retorna400() {
         when(service.updateForSite(anyLong(), any(EppParameterRequest.class), anyString()))
@@ -129,7 +140,7 @@ class EppParameterControllerTest {
 
         client.put().uri("/parameters/{siteId}", SITE_ID)
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue("{\"requiredEpp\":[\"casco_minero\"]}")
+                .bodyValue("{\"requiredEpp\":[\"casco_minero\"],\"cooldownSeconds\":60}")
                 .exchange()
                 .expectStatus().isBadRequest();
     }

@@ -32,16 +32,21 @@ CREATE TABLE notification_statuses (
 -- code: identificador de negocio estable de la obra — se define solo al
 -- crear (autogenerado si no se especifica) y es inmutable despues: el CV
 -- lo usa para identificarse en cada evento que manda (ver CLAUDE.md).
+-- cooldown_seconds: segundos minimos entre dos alertas del mismo trabajador+EPP
+-- en el CV (ComplianceTracker) — editable desde el frontend en la seccion
+-- Parametros (junto con los EPP requeridos), no desde el CRUD de Obras.
+-- Se empuja al CV vía el mismo webhook /webhook/rules que los EPP requeridos.
 CREATE TABLE sites (
-    id         BIGINT       PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-    code       VARCHAR(50)  NOT NULL UNIQUE,
-    name       VARCHAR(100) NOT NULL UNIQUE,
-    location   VARCHAR(200),
-    active     BOOLEAN      NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMP    NOT NULL DEFAULT NOW(),
-    created_by VARCHAR(100),
-    updated_at TIMESTAMP    NOT NULL DEFAULT NOW(),
-    updated_by VARCHAR(100)
+    id               BIGINT       PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    code             VARCHAR(50)  NOT NULL UNIQUE,
+    name             VARCHAR(100) NOT NULL UNIQUE,
+    location         VARCHAR(200),
+    cooldown_seconds INTEGER      NOT NULL DEFAULT 60,
+    active           BOOLEAN      NOT NULL DEFAULT TRUE,
+    created_at       TIMESTAMP    NOT NULL DEFAULT NOW(),
+    created_by       VARCHAR(100),
+    updated_at       TIMESTAMP    NOT NULL DEFAULT NOW(),
+    updated_by       VARCHAR(100)
 );
 
 -- Zonas dentro de una obra (ej. "Piso 2 - Construcción", "Almacén").

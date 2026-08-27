@@ -42,23 +42,24 @@ public class HttpRulesPublisher implements RulesPublisherPort {
     }
 
     @Override
-    public void publishRules(Long siteId, List<String> requiredEppCodes) {
+    public void publishRules(Long siteId, List<String> requiredEppCodes, int cooldownSeconds) {
         cameraRepository.findBySiteIdAndActiveTrue(siteId)
                 .filter(camera -> camera.ipAddress() != null && !camera.ipAddress().isBlank())
-                .flatMap(camera -> notifyCamera(camera, requiredEppCodes))
+                .flatMap(camera -> notifyCamera(camera, requiredEppCodes, cooldownSeconds))
                 .subscribe();
     }
 
-    private Mono<Void> notifyCamera(Camera camera, List<String> requiredEppCodes) {
+    private Mono<Void> notifyCamera(Camera camera, List<String> requiredEppCodes, int cooldownSeconds) {
         URI uri = URI.create("http://" + camera.ipAddress() + ":" + webhookPort + WEBHOOK_PATH);
         return webClient.post()
                 .uri(uri)
-                .bodyValue(Map.of("required_epp", requiredEppCodes))
+                .bodyValue(Map.of("required_epp", requiredEppCodes, "cooldown_seconds", cooldownSeconds))
                 .retrieve()
                 .toBodilessEntity()
                 .timeout(webhookTimeout)
                 .doOnSuccess(response -> log.info(
-                        "Reglas EPP notificadas al CV | uri={} | required_epp={}", uri, requiredEppCodes))
+                        "Reglas EPP notificadas al CV | uri={} | required_epp={} | cooldown_seconds={}",
+                        uri, requiredEppCodes, cooldownSeconds))
                 .onErrorResume(ex -> {
                     log.error("Fallo notificando reglas EPP al CV | uri={} | {}", uri, ex.getMessage());
                     return Mono.empty();

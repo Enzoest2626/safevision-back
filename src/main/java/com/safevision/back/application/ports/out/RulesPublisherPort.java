@@ -8,5 +8,5 @@ import java.util.List;
  */
 public interface RulesPublisherPort {
 
-    void publishRules(Long siteId, List<String> requiredEppCodes);
+    void publishRules(Long siteId, List<String> requiredEppCodes, int cooldownSeconds);
 }

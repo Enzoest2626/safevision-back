@@ -10,7 +10,8 @@ import java.util.List;
  */
 public record EppParameterResponse(
         Long siteId,
-        List<EppItem> requiredEpp
+        List<EppItem> requiredEpp,
+        Integer cooldownSeconds
 ) {
     public record EppItem(Long id, String code, String name) {
         public static EppItem from(EppParameter p) {

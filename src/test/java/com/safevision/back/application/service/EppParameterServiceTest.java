@@ -10,7 +10,9 @@ import com.safevision.back.application.ports.out.EppParameterRepositoryPort;
 import com.safevision.back.application.ports.out.RulesPublisherPort;
 import com.safevision.back.application.ports.out.SiteEppConfigVersionRepositoryPort;
 import com.safevision.back.application.ports.out.SiteEppRequirementRepositoryPort;
+import com.safevision.back.application.ports.out.SiteRepositoryPort;
 import com.safevision.back.domain.model.EppParameter;
+import com.safevision.back.domain.model.Site;
 import com.safevision.back.domain.model.SiteEppConfigVersion;
 import com.safevision.back.domain.model.SiteEppRequirement;
 import com.safevision.back.infrastructure.web.dto.EppParameterRequest;
@@ -52,6 +54,9 @@ class EppParameterServiceTest {
     private SiteEppConfigVersionRepositoryPort versionRepo;
 
     @Mock
+    private SiteRepositoryPort siteRepo;
+
+    @Mock
     private RulesPublisherPort rulesPublisher;
 
     private EppParameterService service;
@@ -61,14 +66,20 @@ class EppParameterServiceTest {
     private final EppParameter casco = epp(1L, "casco", "Casco de seguridad");
     private final EppParameter chaleco = epp(2L, "chaleco", "Chaleco reflectivo");
     private final EppParameter guantes = epp(3L, "guantes", "Guantes de protección");
+    private final Site site = site(SITE_ID, 60);
 
     @BeforeEach
     void setUp() {
-        service = new EppParameterService(eppRepo, siteEppRepo, versionRepo, rulesPublisher);
+        service = new EppParameterService(eppRepo, siteEppRepo, versionRepo, siteRepo, rulesPublisher);
     }
 
     private static EppParameter epp(Long id, String code, String name) {
         return new EppParameter(id, code, name, true,
+                LocalDateTime.now(), "system", LocalDateTime.now(), "system");
+    }
+
+    private static Site site(Long id, int cooldownSeconds) {
+        return new Site(id, "OBRA-" + id, "Obra " + id, "Lima", cooldownSeconds, true,
                 LocalDateTime.now(), "system", LocalDateTime.now(), "system");
     }
 
@@ -81,7 +92,7 @@ class EppParameterServiceTest {
     @Test
     @DisplayName("PUT con EPPs válidos persiste la configuración por obra")
     void actualizarEppsPorObra_persiste() {
-        EppParameterRequest request = new EppParameterRequest(List.of("casco", "chaleco"));
+        EppParameterRequest request = new EppParameterRequest(List.of("casco", "chaleco"), 45);
 
         when(eppRepo.findByCode("casco")).thenReturn(Mono.just(casco));
         when(eppRepo.findByCode("chaleco")).thenReturn(Mono.just(chaleco));
@@ -92,6 +103,8 @@ class EppParameterServiceTest {
         when(siteEppRepo.save(any(SiteEppRequirement.class)))
                 .thenReturn(Mono.just(req(SITE_ID, 1L)))
                 .thenReturn(Mono.just(req(SITE_ID, 2L)));
+        when(siteRepo.findById(SITE_ID)).thenReturn(Mono.just(site));
+        when(siteRepo.save(any(Site.class))).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
 
         StepVerifier.create(service.updateForSite(SITE_ID, request, "supervisor1"))
                 .assertNext(response -> {
@@ -106,13 +119,14 @@ class EppParameterServiceTest {
                     assertThat(response.requiredEpp().stream()
                             .map(EppParameterResponse.EppItem::code).toList())
                             .containsExactlyInAnyOrder("casco", "chaleco");
+                    assertThat(response.cooldownSeconds()).isEqualTo(45);
                 })
                 .verifyComplete();
 
         verify(siteEppRepo).deleteAllBySiteId(SITE_ID);
         verify(siteEppRepo, times(2)).save(any(SiteEppRequirement.class));
         verify(rulesPublisher).publishRules(eq(SITE_ID), argThat(codes ->
-                codes.containsAll(List.of("casco", "chaleco"))));
+                codes.containsAll(List.of("casco", "chaleco"))), eq(45));
     }
 
     // ── Consulta de reglas activas para una obra ────────────────────────
@@ -124,6 +138,7 @@ class EppParameterServiceTest {
                 .thenReturn(Flux.just(req(SITE_ID, 1L), req(SITE_ID, 2L)));
         when(eppRepo.findById(1L)).thenReturn(Mono.just(casco));
         when(eppRepo.findById(2L)).thenReturn(Mono.just(chaleco));
+        when(siteRepo.findById(SITE_ID)).thenReturn(Mono.just(site));
 
         StepVerifier.create(service.findBySite(SITE_ID))
                 .assertNext(response -> {
@@ -134,6 +149,7 @@ class EppParameterServiceTest {
 
                     assertThat(response.siteId()).isEqualTo(SITE_ID);
                     assertThat(response.requiredEpp()).hasSize(2);
+                    assertThat(response.cooldownSeconds()).isEqualTo(60);
                 })
                 .verifyComplete();
     }
@@ -143,6 +159,7 @@ class EppParameterServiceTest {
     void sinConfiguracionDeObra_usaFallbackGlobal() {
         when(siteEppRepo.findBySiteId(SITE_ID)).thenReturn(Flux.empty());
         when(eppRepo.findByActiveTrue()).thenReturn(Flux.just(casco, chaleco, guantes));
+        when(siteRepo.findById(SITE_ID)).thenReturn(Mono.empty());
 
         StepVerifier.create(service.findBySite(SITE_ID))
                 .assertNext(response -> {
@@ -161,7 +178,7 @@ class EppParameterServiceTest {
     @Test
     @DisplayName("Lista vacía de EPPs lanza BAD_REQUEST")
     void listaVacia_lanzaBadRequest() {
-        EppParameterRequest request = new EppParameterRequest(List.of());
+        EppParameterRequest request = new EppParameterRequest(List.of(), 60);
 
         StepVerifier.create(service.updateForSite(SITE_ID, request, "supervisor1"))
                 .expectErrorMatches(ex -> {
@@ -175,13 +192,13 @@ class EppParameterServiceTest {
 
         verify(siteEppRepo, never()).deleteAllBySiteId(anyLong());
         verify(siteEppRepo, never()).save(any());
-        verify(rulesPublisher, never()).publishRules(anyLong(), any());
+        verify(rulesPublisher, never()).publishRules(anyLong(), any(), anyInt());
     }
 
     @Test
     @DisplayName("Código EPP inexistente en catálogo lanza BAD_REQUEST")
     void eppDesconocido_lanzaBadRequest() {
-        EppParameterRequest request = new EppParameterRequest(List.of("casco", "casco_minero"));
+        EppParameterRequest request = new EppParameterRequest(List.of("casco", "casco_minero"), 60);
         when(eppRepo.findByCode("casco")).thenReturn(Mono.just(casco));
         when(eppRepo.findByCode("casco_minero")).thenReturn(Mono.empty());
 
@@ -193,7 +210,7 @@ class EppParameterServiceTest {
                 .verify();
 
         verify(siteEppRepo, never()).deleteAllBySiteId(anyLong());
-        verify(rulesPublisher, never()).publishRules(anyLong(), any());
+        verify(rulesPublisher, never()).publishRules(anyLong(), any(), anyInt());
     }
 
     // ── Edición concurrente sobre la misma obra (optimistic locking) ────
@@ -202,8 +219,8 @@ class EppParameterServiceTest {
     @DisplayName("20 repeticiones de dos PUT reales concurrentes (threads): siempre 1 gana y 1 recibe 409")
     void edicionConcurrente_conflictoDeVersion_20Repeticiones() throws Exception {
         final int REPETICIONES = 20;
-        EppParameterRequest req1 = new EppParameterRequest(List.of("casco"));
-        EppParameterRequest req2 = new EppParameterRequest(List.of("chaleco"));
+        EppParameterRequest req1 = new EppParameterRequest(List.of("casco"), 60);
+        EppParameterRequest req2 = new EppParameterRequest(List.of("chaleco"), 60);
 
         when(eppRepo.findByCode("casco")).thenReturn(Mono.just(casco));
         when(eppRepo.findByCode("chaleco")).thenReturn(Mono.just(chaleco));
@@ -221,6 +238,8 @@ class EppParameterServiceTest {
 
         when(siteEppRepo.deleteAllBySiteId(SITE_ID)).thenReturn(Mono.just(1L));
         when(siteEppRepo.save(any(SiteEppRequirement.class))).thenReturn(Mono.just(req(SITE_ID, 1L)));
+        when(siteRepo.findById(SITE_ID)).thenReturn(Mono.just(site));
+        when(siteRepo.save(any(Site.class))).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
 
         System.out.println("\n" + REPETICIONES + " repeticiones de dos PUT reales concurrentes "
                 + "(threads) sobre siteId=" + SITE_ID + ":");

@@ -4,7 +4,9 @@ import com.safevision.back.application.ports.out.EppParameterRepositoryPort;
 import com.safevision.back.application.ports.out.RulesPublisherPort;
 import com.safevision.back.application.ports.out.SiteEppConfigVersionRepositoryPort;
 import com.safevision.back.application.ports.out.SiteEppRequirementRepositoryPort;
+import com.safevision.back.application.ports.out.SiteRepositoryPort;
 import com.safevision.back.domain.model.EppParameter;
+import com.safevision.back.domain.model.Site;
 import com.safevision.back.domain.model.SiteEppRequirement;
 import com.safevision.back.infrastructure.web.dto.EppParameterRequest;
 import com.safevision.back.infrastructure.web.dto.EppParameterResponse;
@@ -20,18 +22,24 @@ import java.util.List;
 @Service
 public class EppParameterService {
 
+    /** Mismo default que {@code ComplianceTracker.DEFAULT_COOLDOWN_SECONDS} en el CV. */
+    private static final int DEFAULT_COOLDOWN_SECONDS = 60;
+
     private final EppParameterRepositoryPort eppRepo;
     private final SiteEppRequirementRepositoryPort siteEppRepo;
     private final SiteEppConfigVersionRepositoryPort versionRepo;
+    private final SiteRepositoryPort siteRepo;
     private final RulesPublisherPort rulesPublisher;
 
     public EppParameterService(EppParameterRepositoryPort eppRepo,
                                SiteEppRequirementRepositoryPort siteEppRepo,
                                SiteEppConfigVersionRepositoryPort versionRepo,
+                               SiteRepositoryPort siteRepo,
                                RulesPublisherPort rulesPublisher) {
         this.eppRepo = eppRepo;
         this.siteEppRepo = siteEppRepo;
         this.versionRepo = versionRepo;
+        this.siteRepo = siteRepo;
         this.rulesPublisher = rulesPublisher;
     }
 
@@ -41,7 +49,7 @@ public class EppParameterService {
      * todos los EPPs activos del catálogo global (fail-safe).
      */
     public Mono<EppParameterResponse> findBySite(Long siteId) {
-        return siteEppRepo.findBySiteId(siteId)
+        Mono<List<EppParameter>> eppParamsMono = siteEppRepo.findBySiteId(siteId)
                 .flatMap(req -> eppRepo.findById(req.eppParameterId()))
                 .collectList()
                 .flatMap(eppParams -> {
@@ -50,12 +58,15 @@ public class EppParameterService {
                         return eppRepo.findByActiveTrue().collectList();
                     }
                     return Mono.just(eppParams);
-                })
-                .map(eppParams -> new EppParameterResponse(
+                });
+        Mono<Integer> cooldownMono = siteRepo.findById(siteId)
+                .map(Site::cooldownSeconds)
+                .defaultIfEmpty(DEFAULT_COOLDOWN_SECONDS);
+        return Mono.zip(eppParamsMono, cooldownMono)
+                .map(tuple -> new EppParameterResponse(
                         siteId,
-                        eppParams.stream()
-                                .map(EppParameterResponse.EppItem::from)
-                                .toList()
+                        tuple.getT1().stream().map(EppParameterResponse.EppItem::from).toList(),
+                        tuple.getT2()
                 ));
     }
 
@@ -73,8 +84,19 @@ public class EppParameterService {
         return validateEppCodes(request.requiredEpp())
                 .flatMap(validEpps -> acquireVersionLock(siteId).thenReturn(validEpps))
                 .flatMap(validEpps -> replaceRequirements(siteId, validEpps, updatedBy))
-                .map(validEpps -> toResponse(siteId, validEpps))
+                .flatMap(validEpps -> updateCooldown(siteId, request.cooldownSeconds(), updatedBy)
+                        .thenReturn(toResponse(siteId, validEpps, request.cooldownSeconds())))
                 .doOnSuccess(this::publishRules);
+    }
+
+    /** Actualiza el cooldown de la obra (columna `sites.cooldown_seconds`). */
+    private Mono<Void> updateCooldown(Long siteId, int cooldownSeconds, String updatedBy) {
+        return siteRepo.findById(siteId)
+                .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Site not found")))
+                .flatMap(site -> siteRepo.save(new Site(
+                        site.id(), site.code(), site.name(), site.location(), cooldownSeconds, site.active(),
+                        site.createdAt(), site.createdBy(), LocalDateTime.now(), updatedBy)))
+                .then();
     }
 
     /** Valida que todos los códigos pedidos existan en el catálogo (sin efectos secundarios todavía). */
@@ -112,13 +134,14 @@ public class EppParameterService {
                 .then(Mono.just(validEpps));
     }
 
-    private EppParameterResponse toResponse(Long siteId, List<EppParameter> validEpps) {
+    private EppParameterResponse toResponse(Long siteId, List<EppParameter> validEpps, int cooldownSeconds) {
         return new EppParameterResponse(siteId,
-                validEpps.stream().map(EppParameterResponse.EppItem::from).toList());
+                validEpps.stream().map(EppParameterResponse.EppItem::from).toList(), cooldownSeconds);
     }
 
     private void publishRules(EppParameterResponse response) {
         rulesPublisher.publishRules(response.siteId(),
-                response.requiredEpp().stream().map(EppParameterResponse.EppItem::code).toList());
+                response.requiredEpp().stream().map(EppParameterResponse.EppItem::code).toList(),
+                response.cooldownSeconds());
     }
 }

@@ -64,7 +64,7 @@ class TelegramNotificationPerformanceTest {
                 LocalDateTime.of(2026, 6, 24, 13, 30), LocalDateTime.now());
         camera = new Camera(20L, 1L, null, "CAM-01", "Entrada", "10.0.0.5", null,
                 true, LocalDateTime.now(), "system", LocalDateTime.now(), "system");
-        site = new Site(1L, "OBRA-1", "Main-Site", "Lima", true,
+        site = new Site(1L, "OBRA-1", "Main-Site", "Lima", 60, true,
                 LocalDateTime.now(), "system", LocalDateTime.now(), "system");
     }
 
