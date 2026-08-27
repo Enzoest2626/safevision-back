@@ -84,7 +84,7 @@ class IncidentNotificationServiceTest {
     @Test
     @DisplayName("Obra con contacto Telegram → envía al chat del contacto y registra SENT")
     void notify_conContactoDeObra_notificaSent() {
-        SiteContact contact = new SiteContact(5L, 1L, "Supervisor", "999999999", "111222333",
+        SiteContact contact = new SiteContact(5L, 1L, "Supervisor", "999999999", "111222333", null,
                 true, LocalDateTime.now(), "system", LocalDateTime.now(), "system");
         when(siteContactRepo.findBySiteIdAndTelegramChatIdIsNotNullAndActiveTrue(1L))
                 .thenReturn(Flux.just(contact));

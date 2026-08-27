@@ -17,6 +17,8 @@ app:
   cv:
     webhook-port: ${CV_WEBHOOK_PORT:5001}
     webhook-timeout-seconds: ${CV_WEBHOOK_TIMEOUT_SECONDS:5}
+  telegram:
+    linking-poll-interval-ms: ${TELEGRAM_LINKING_POLL_INTERVAL_MS:900000}
   security:
     alert-service-token: ${ALERT_SERVICE_TOKEN:dev-token}
     jwt-secret: ${JWT_SECRET:change-me-safevision-dev-secret-minimum-32-bytes-long}

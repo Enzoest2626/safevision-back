@@ -48,7 +48,7 @@ class SiteContactControllerTest {
                     return chain.filter(exchange);
                 })
                 .build();
-        sampleResponse = new SiteContactResponse(1L, SITE_ID, "Supervisor", "999999999", "111222333",
+        sampleResponse = new SiteContactResponse(1L, SITE_ID, "Supervisor", "999999999", "111222333", null,
                 true, LocalDateTime.now(), "system", LocalDateTime.now(), "system");
     }
 

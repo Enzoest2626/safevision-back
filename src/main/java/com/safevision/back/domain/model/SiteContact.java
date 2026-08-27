@@ -12,6 +12,7 @@ public record SiteContact(
         String name,
         String phone,
         String telegramChatId,
+        String telegramLinkCode,
         boolean active,
         LocalDateTime createdAt,
         String createdBy,

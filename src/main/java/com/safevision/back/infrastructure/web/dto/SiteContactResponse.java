@@ -10,6 +10,7 @@ public record SiteContactResponse(
         String name,
         String phone,
         String telegramChatId,
+        String telegramLinkCode,
         boolean active,
         LocalDateTime createdAt,
         String createdBy,
@@ -18,7 +19,7 @@ public record SiteContactResponse(
 ) {
     public static SiteContactResponse from(SiteContact c) {
         return new SiteContactResponse(
-                c.id(), c.siteId(), c.name(), c.phone(), c.telegramChatId(),
+                c.id(), c.siteId(), c.name(), c.phone(), c.telegramChatId(), c.telegramLinkCode(),
                 c.active(), c.createdAt(), c.createdBy(), c.updatedAt(), c.updatedBy()
         );
     }

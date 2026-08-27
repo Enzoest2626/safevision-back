@@ -33,7 +33,7 @@ class SiteContactServiceTest {
     private static final Long SITE_ID = 10L;
 
     private final SiteContact contact = new SiteContact(1L, SITE_ID, "Supervisor",
-            "999999999", "111222333", true, LocalDateTime.now(), "system", LocalDateTime.now(), "system");
+            "999999999", "111222333", null, true, LocalDateTime.now(), "system", LocalDateTime.now(), "system");
 
     private final SiteContactRequest request = new SiteContactRequest("Supervisor", "999999999", "111222333");
 
@@ -107,6 +107,71 @@ class SiteContactServiceTest {
                 .expectErrorMatches(ex -> ex instanceof ResponseStatusException rse
                         && rse.getStatusCode() == HttpStatus.NOT_FOUND)
                 .verify();
+
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("create sin telegramChatId genera un codigo de vinculacion de 6 digitos")
+    void create_sinTelegramChatId_generaLinkCode() {
+        SiteContactRequest sinChatId = new SiteContactRequest("Supervisor", "999999999", null);
+        when(repository.save(any(SiteContact.class))).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+
+        StepVerifier.create(service.create(SITE_ID, sinChatId, "supervisor1"))
+                .assertNext(response -> {
+                    assertThat(response.telegramChatId()).isNull();
+                    assertThat(response.telegramLinkCode()).matches("\\d{6}");
+                })
+                .verifyComplete();
+    }
+
+    @Test
+    @DisplayName("create con telegramChatId no genera codigo de vinculacion")
+    void create_conTelegramChatId_noGeneraLinkCode() {
+        when(repository.save(any(SiteContact.class))).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+
+        StepVerifier.create(service.create(SITE_ID, request, "supervisor1"))
+                .assertNext(response -> assertThat(response.telegramLinkCode()).isNull())
+                .verifyComplete();
+    }
+
+    @Test
+    @DisplayName("update sin telegramChatId conserva el codigo de vinculacion pendiente")
+    void update_sinTelegramChatId_conservaLinkCodeExistente() {
+        SiteContact pendiente = new SiteContact(1L, SITE_ID, "Supervisor", "999999999", null,
+                "654321", true, LocalDateTime.now(), "system", LocalDateTime.now(), "system");
+        SiteContactRequest sinChatId = new SiteContactRequest("Supervisor Editado", "999999999", null);
+        when(repository.findById(1L)).thenReturn(Mono.just(pendiente));
+        when(repository.save(any(SiteContact.class))).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+
+        StepVerifier.create(service.update(SITE_ID, 1L, sinChatId, "supervisor1"))
+                .assertNext(response -> assertThat(response.telegramLinkCode()).isEqualTo("654321"))
+                .verifyComplete();
+    }
+
+    @Test
+    @DisplayName("tryLinkByCode con codigo valido setea el chat_id y limpia el codigo")
+    void tryLinkByCode_codigoValido_vincula() {
+        SiteContact pendiente = new SiteContact(1L, SITE_ID, "Supervisor", "999999999", null,
+                "123456", true, LocalDateTime.now(), "system", LocalDateTime.now(), "system");
+        when(repository.findByTelegramLinkCodeAndActiveTrue("123456")).thenReturn(Mono.just(pendiente));
+        when(repository.save(any(SiteContact.class))).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+
+        StepVerifier.create(service.tryLinkByCode("123456", "chat-999"))
+                .expectNext("Supervisor")
+                .verifyComplete();
+
+        verify(repository).save(argThat(c ->
+                "chat-999".equals(c.telegramChatId()) && c.telegramLinkCode() == null));
+    }
+
+    @Test
+    @DisplayName("tryLinkByCode con codigo desconocido no vincula nada")
+    void tryLinkByCode_codigoDesconocido_noVincula() {
+        when(repository.findByTelegramLinkCodeAndActiveTrue("000000")).thenReturn(Mono.empty());
+
+        StepVerifier.create(service.tryLinkByCode("000000", "chat-999"))
+                .verifyComplete();
 
         verify(repository, never()).save(any());
     }

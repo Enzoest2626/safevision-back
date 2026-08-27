@@ -10,10 +10,13 @@ import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.security.SecureRandom;
 import java.time.LocalDateTime;
 
 @Service
 public class SiteContactService {
+
+    private static final SecureRandom LINK_CODE_RANDOM = new SecureRandom();
 
     private final SiteContactRepositoryPort repository;
 
@@ -28,8 +31,9 @@ public class SiteContactService {
 
     public Mono<SiteContactResponse> create(Long siteId, SiteContactRequest request, String createdBy) {
         LocalDateTime now = LocalDateTime.now();
+        String linkCode = request.telegramChatId() == null ? generateLinkCode() : null;
         SiteContact contact = new SiteContact(
-                null, siteId, request.name(), request.phone(), request.telegramChatId(),
+                null, siteId, request.name(), request.phone(), request.telegramChatId(), linkCode,
                 true, now, createdBy, now, createdBy
         );
         return repository.save(contact).map(SiteContactResponse::from);
@@ -42,9 +46,16 @@ public class SiteContactService {
                 .switchIfEmpty(Mono.error(
                         new ResponseStatusException(HttpStatus.NOT_FOUND, "Contact not found")))
                 .flatMap(existing -> {
+                    // Si el admin pega un chat_id a mano, ya no hace falta código de
+                    // vinculación. Si sigue sin chat_id, conserva el código pendiente
+                    // que ya tenía (o genera uno si el contacto es de antes de esta
+                    // funcionalidad y nunca tuvo).
+                    String linkCode = request.telegramChatId() != null
+                            ? null
+                            : existing.telegramLinkCode() != null ? existing.telegramLinkCode() : generateLinkCode();
                     SiteContact updated = new SiteContact(
                             existing.id(), siteId, request.name(), request.phone(),
-                            request.telegramChatId(), true,
+                            request.telegramChatId(), linkCode, true,
                             existing.createdAt(), existing.createdBy(),
                             LocalDateTime.now(), updatedBy
                     );
@@ -61,12 +72,37 @@ public class SiteContactService {
                 .flatMap(existing -> {
                     SiteContact deactivated = new SiteContact(
                             existing.id(), siteId, existing.name(), existing.phone(),
-                            existing.telegramChatId(), false,
+                            existing.telegramChatId(), existing.telegramLinkCode(), false,
                             existing.createdAt(), existing.createdBy(),
                             LocalDateTime.now(), updatedBy
                     );
                     return repository.save(deactivated);
                 })
                 .then();
+    }
+
+    /**
+     * Intenta vincular un contacto pendiente a partir del texto recibido por el
+     * bot de Telegram. Usado por {@code TelegramLinkingPoller}.
+     *
+     * @return el nombre del contacto vinculado, o vacío si el texto no matchea
+     *         ningún código pendiente.
+     */
+    public Mono<String> tryLinkByCode(String text, String chatId) {
+        return repository.findByTelegramLinkCodeAndActiveTrue(text.trim())
+                .flatMap(contact -> {
+                    SiteContact linked = new SiteContact(
+                            contact.id(), contact.siteId(), contact.name(), contact.phone(),
+                            chatId, null, true,
+                            contact.createdAt(), contact.createdBy(),
+                            LocalDateTime.now(), "telegram-bot"
+                    );
+                    return repository.save(linked);
+                })
+                .map(SiteContact::name);
+    }
+
+    private String generateLinkCode() {
+        return String.format("%06d", LINK_CODE_RANDOM.nextInt(1_000_000));
     }
 }

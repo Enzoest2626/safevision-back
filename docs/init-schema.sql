@@ -156,25 +156,33 @@ CREATE TABLE notifications (
 
 -- ────────────────────────────────────────────────────────────
 -- CONTACTOS POR OBRA  (reciben alertas Telegram al detectar incidente)
--- phone          : número de contacto general
+-- phone            : número de contacto general
 -- telegram_chat_id : ID de chat del bot; se obtiene cuando la persona
---                    inicia conversación con el bot (@SafeVisionBot /start).
---                    Si es NULL, no recibe alertas Telegram.
+--                    vincula su cuenta (ver telegram_link_code abajo) o,
+--                    si ya lo conoce, lo pega directo al crear/editar el
+--                    contacto. Si es NULL, no recibe alertas Telegram.
+-- telegram_link_code : código corto (6 dígitos) generado al crear el
+--                    contacto si no vino telegram_chat_id — el supervisor
+--                    le manda "/start <código>" (un solo mensaje) a
+--                    @safevision_epp_bot; TelegramLinkingPoller lo matchea
+--                    y setea telegram_chat_id, dejando este campo en NULL.
+--                    Sin expiración por tiempo (alcance de esta fase).
 -- Fallback global: si la obra no tiene contactos con telegram_chat_id,
 --                  se usa TELEGRAM_CHAT_ID del entorno (env var).
 -- ────────────────────────────────────────────────────────────
 
 CREATE TABLE site_contacts (
-    id               BIGINT       PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-    site_id          BIGINT       NOT NULL REFERENCES sites(id),
-    name             VARCHAR(100) NOT NULL,
-    phone            VARCHAR(20)  NOT NULL,
-    telegram_chat_id VARCHAR(100),
-    active           BOOLEAN      NOT NULL DEFAULT TRUE,
-    created_at       TIMESTAMP    NOT NULL DEFAULT NOW(),
-    created_by       VARCHAR(100),
-    updated_at       TIMESTAMP    NOT NULL DEFAULT NOW(),
-    updated_by       VARCHAR(100)
+    id                  BIGINT       PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    site_id             BIGINT       NOT NULL REFERENCES sites(id),
+    name                VARCHAR(100) NOT NULL,
+    phone               VARCHAR(20)  NOT NULL,
+    telegram_chat_id    VARCHAR(100),
+    telegram_link_code  VARCHAR(10),
+    active              BOOLEAN      NOT NULL DEFAULT TRUE,
+    created_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
+    created_by          VARCHAR(100),
+    updated_at          TIMESTAMP    NOT NULL DEFAULT NOW(),
+    updated_by          VARCHAR(100)
 );
 
 -- ────────────────────────────────────────────────────────────
