@@ -2,6 +2,7 @@ package com.safevision.back.application.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -55,17 +56,56 @@ class IncidentQueryServiceTest {
     }
 
     @Test
-    @DisplayName("findByFilter sin from/to → usa rango por defecto (2000-01-01 .. ahora)")
-    void buscarPorFiltro_sinRango_usaRangoPorDefecto() {
+    @DisplayName("findByFilter sin from/to/page/size → rango por defecto (2000-01-01 .. ahora), page=1 size=20")
+    void buscarPorFiltro_sinParametros_usaDefaults() {
         Incident sample = new Incident(100L, 10L, 20L, 1L, "ext-sample",
                 new String[]{"helmet"}, LocalDateTime.now(), LocalDateTime.now());
-        when(incidentRepo.findByFilter(eq(1L), any(), any(), any())).thenReturn(Flux.just(sample));
+        when(incidentRepo.findByFilterPaged(eq(1L), any(), any(), any(), eq(20), eq(0L)))
+                .thenReturn(Flux.just(sample));
+        when(incidentRepo.countByFilter(eq(1L), any(), any(), any())).thenReturn(Mono.just(1L));
 
-        StepVerifier.create(service.findByFilter(1L, null, null, null))
-                .expectNextCount(1)
+        StepVerifier.create(service.findByFilter(1L, null, null, null, null, null))
+                .assertNext(paged -> {
+                    assertThat(paged.items()).hasSize(1);
+                    assertThat(paged.page()).isEqualTo(1);
+                    assertThat(paged.size()).isEqualTo(20);
+                    assertThat(paged.totalItems()).isEqualTo(1);
+                    assertThat(paged.totalPages()).isEqualTo(1);
+                })
                 .verifyComplete();
 
-        verify(incidentRepo).findByFilter(eq(1L), any(), eq(LocalDateTime.of(2000, 1, 1, 0, 0)), any());
+        verify(incidentRepo).findByFilterPaged(eq(1L), any(),
+                eq(LocalDateTime.of(2000, 1, 1, 0, 0)), any(), eq(20), eq(0L));
+    }
+
+    @Test
+    @DisplayName("findByFilter con size=200 lo clampea a 50 (máximo por consulta)")
+    void buscarPorFiltro_sizeExcedeMaximo_seClampeaA50() {
+        when(incidentRepo.findByFilterPaged(any(), any(), any(), any(), eq(50), anyLong())).thenReturn(Flux.empty());
+        when(incidentRepo.countByFilter(any(), any(), any(), any())).thenReturn(Mono.just(0L));
+
+        StepVerifier.create(service.findByFilter(null, null, null, null, 1, 200))
+                .assertNext(paged -> assertThat(paged.size()).isEqualTo(50))
+                .verifyComplete();
+
+        verify(incidentRepo).findByFilterPaged(any(), any(), any(), any(), eq(50), anyLong());
+    }
+
+    @Test
+    @DisplayName("findByFilter con page=3 size=20 → offset=40")
+    void buscarPorFiltro_page3_calculaOffsetCorrecto() {
+        when(incidentRepo.findByFilterPaged(any(), any(), any(), any(), eq(20), eq(40L))).thenReturn(Flux.empty());
+        when(incidentRepo.countByFilter(any(), any(), any(), any())).thenReturn(Mono.just(45L));
+
+        StepVerifier.create(service.findByFilter(null, null, null, null, 3, 20))
+                .assertNext(paged -> {
+                    assertThat(paged.page()).isEqualTo(3);
+                    assertThat(paged.totalItems()).isEqualTo(45);
+                    assertThat(paged.totalPages()).isEqualTo(3);
+                })
+                .verifyComplete();
+
+        verify(incidentRepo).findByFilterPaged(any(), any(), any(), any(), eq(20), eq(40L));
     }
 
     @Test

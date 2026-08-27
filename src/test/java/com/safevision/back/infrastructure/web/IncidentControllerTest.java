@@ -1,5 +1,6 @@
 package com.safevision.back.infrastructure.web;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.never;
@@ -14,6 +15,7 @@ import com.safevision.back.infrastructure.web.dto.CvIncidentMessage;
 import com.safevision.back.infrastructure.web.dto.EvidenceResponse;
 import com.safevision.back.infrastructure.web.dto.IncidentRequest;
 import com.safevision.back.infrastructure.web.dto.IncidentResponse;
+import com.safevision.back.infrastructure.web.dto.PagedResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -176,14 +178,20 @@ class IncidentControllerTest {
     }
 
     @Test
-    @DisplayName("GET /api/v1/incidents retorna 200 con lista filtrada")
+    @DisplayName("GET /api/v1/incidents retorna 200 con pagina de resultados")
     void findAll_retorna200() {
-        when(queryService.findByFilter(any(), any(), any(), any())).thenReturn(Flux.just(sampleResponse));
+        PagedResponse<IncidentResponse> paged = PagedResponse.of(List.of(sampleResponse), 1, 20, 1L);
+        when(queryService.findByFilter(any(), any(), any(), any(), any(), any())).thenReturn(Mono.just(paged));
 
         client.get().uri("/incidents?siteId=1")
                 .exchange()
                 .expectStatus().isOk()
-                .expectBody(new ParameterizedTypeReference<ApiEnvelope<List<IncidentResponse>>>() {});
+                .expectBody(new ParameterizedTypeReference<ApiEnvelope<PagedResponse<IncidentResponse>>>() {})
+                .value(envelope -> {
+                    assertThat(envelope.data().items()).hasSize(1);
+                    assertThat(envelope.data().page()).isEqualTo(1);
+                    assertThat(envelope.data().totalItems()).isEqualTo(1L);
+                });
     }
 
     @Test

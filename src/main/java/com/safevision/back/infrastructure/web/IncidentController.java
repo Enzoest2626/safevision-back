@@ -8,6 +8,7 @@ import com.safevision.back.infrastructure.web.dto.CvIncidentMessage;
 import com.safevision.back.infrastructure.web.dto.EvidenceResponse;
 import com.safevision.back.infrastructure.web.dto.IncidentRequest;
 import com.safevision.back.infrastructure.web.dto.IncidentResponse;
+import com.safevision.back.infrastructure.web.dto.PagedResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -84,14 +85,19 @@ public class IncidentController {
     }
 
     @GetMapping("/incidents")
-    @Operation(summary = "Listar incidentes", description = "Filtros opcionales por obra, trabajador y rango de fechas.")
-    @ApiResponse(responseCode = "200", description = "Lista de incidentes")
-    public Mono<ApiEnvelope<List<IncidentResponse>>> findAll(
+    @Operation(summary = "Listar incidentes (paginado)",
+               description = "Filtros opcionales por obra, trabajador y rango de fecha+hora. "
+                       + "page arranca en 1 (default 1); size default 20, máximo 50.")
+    @ApiResponse(responseCode = "200", description = "Página de incidentes")
+    public Mono<ApiEnvelope<PagedResponse<IncidentResponse>>> findAll(
             @RequestParam(required = false) Long siteId,
             @RequestParam(required = false) Long workerId,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime from,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime to) {
-        return ApiEnvelope.wrapList(incidentQueryService.findByFilter(siteId, workerId, from, to), HttpStatus.OK);
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime to,
+            @RequestParam(required = false) Integer page,
+            @RequestParam(required = false) Integer size) {
+        return ApiEnvelope.wrap(
+                incidentQueryService.findByFilter(siteId, workerId, from, to, page, size), HttpStatus.OK);
     }
 
     @GetMapping("/incidents/{id}")
