@@ -10,6 +10,9 @@ target/
 *.project
 *.settings/
 
+# OpenCode — agentes locales, no se suben al repo
+.opencode/
+
 # Spring Boot
 application-prd.yml
 
