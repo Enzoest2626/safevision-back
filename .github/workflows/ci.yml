@@ -77,7 +77,7 @@ jobs:
           tags: safevision-back:ci
 
       - name: Trivy imagen (CRITICAL,HIGH bloquean)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           input: safevision-back:ci
           scan-type: image
@@ -92,7 +92,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Trivy filesystem (deps Java + Dockerfile)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .
