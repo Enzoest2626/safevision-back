@@ -13,6 +13,13 @@ target/
 # OpenCode — agentes locales, no se suben al repo
 .opencode/
 
+# Contexto de agentes de IA — documentación local de trabajo, no se sube.
+# Se conservan en el clon (no se borran del disco) pero se dejan de trackear:
+# el fix de .gitleaks.toml sigue haciendo falta porque el hallazgo original
+# vive en commits ya mergeados (3049959), que gitleaks escanea por historial.
+/AGENTS.md
+/CLAUDE.md
+
 # Spring Boot
 application-prd.yml
 

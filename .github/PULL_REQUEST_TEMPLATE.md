@@ -15,4 +15,4 @@
 ## Checklist
 - [ ] Título sigue `feat(HUxx): ...` / `fix(...): ...` / `docs(...): ...`
 - [ ] Sin secretos (`.env`, `*.pem`, tokens) ni `Co-authored-by`/menciones a IA
-- [ ] `AGENTS.md` ↔ `CLAUDE.md` sincronizados si cambia API/esquema/env
+- [ ] Documentación de arquitectura actualizada si cambia API/esquema/env
