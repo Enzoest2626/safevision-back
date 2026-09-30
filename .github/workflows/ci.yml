@@ -1,29 +1,46 @@
-name: CI (develop)
+name: CI
 
-# Solo develop y solo codigo: infra/ no dispara el pipeline
+# develop / release / main. infra/ no dispara el pipeline
 # (despliegue CloudFormation de infra/ sigue manual con deploy.sh).
 on:
   push:
-    branches: [develop]
+    branches: [develop, release, main]
     paths-ignore:
       - 'infra/**'
       - 'docs/**'
       - '*.md'
   pull_request:
-    branches: [develop]
+    branches: [develop, release, main]
     paths-ignore:
       - 'infra/**'
       - 'docs/**'
       - '*.md'
 
 concurrency:
-  group: ci-develop-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
+  pr-title:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # feat(HU10): ..., feat(sites): ..., docs(...): ..., fix, chore, refactor, test
+          types: |
+            feat
+            fix
+            docs
+            chore
+            refactor
+            test
+
   build-test:
     runs-on: ubuntu-latest
     steps:
@@ -36,12 +53,20 @@ jobs:
           java-version: '21'
           cache: maven
 
-      - name: Build + unitarios + integracion
+      # verify incluye jacoco:check (LINE 70%, BRANCH 60% bloquean).
+      # Local sigue leniente: checkstyle/spotbugs con fail=false en pom.xml.
+      - name: Build + unitarios + integracion + cobertura
         run: chmod +x mvnw && ./mvnw -B verify
 
-      - name: Formato y analisis estatico (no bloquean)
+      # En CI el formato y el analisis estatico si bloquean el PR,
+      # sin cambiar el comportamiento local (override por CLI).
+      - name: Formato y analisis estatico (bloquean en CI)
+        run: ./mvnw -B spotless:check -Dcheckstyle.failOnViolation=true -Dspotbugs.failOnError=true
+
+      - name: Resumen cobertura
         if: always()
-        run: ./mvnw -B spotless:check checkstyle:check spotbugs:check
+        run: |
+          awk -F',' 'NR>1{im+=$4; ic+=$5; bm+=$6; bc+=$7; lm+=$8; lc+=$9} END{printf "LINE %.1f%% | BRANCH %.1f%%\n", lc/(lc+lm)*100, bc/(bc+bm)*100}' target/site/jacoco/jacoco.csv | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Reportes de tests y cobertura
         if: always()
@@ -54,6 +79,9 @@ jobs:
 
   secrets-scan:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -65,10 +93,18 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   docker-build:
+    # No quemar minutos en drafts; corre solo si build-test paso.
+    if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     needs: [build-test]
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Build imagen (sin push)
         uses: docker/build-push-action@v6
@@ -77,6 +113,8 @@ jobs:
           push: false
           load: true
           tags: safevision-back:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Trivy imagen (CRITICAL,HIGH bloquean)
         uses: aquasecurity/trivy-action@v0.36.0
@@ -85,11 +123,22 @@ jobs:
           scan-type: image
           severity: CRITICAL,HIGH
           ignore-unfixed: true
-          format: table
+          format: sarif
+          output: trivy-image.sarif
           exit-code: '1'
+
+      - name: Subir SARIF imagen
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-image.sarif
+          category: trivy-image
 
   dependency-scan:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - uses: actions/checkout@v4
 
@@ -100,5 +149,13 @@ jobs:
           scan-ref: .
           severity: CRITICAL,HIGH
           ignore-unfixed: true
-          format: table
+          format: sarif
+          output: trivy-fs.sarif
           exit-code: '1'
+
+      - name: Subir SARIF dependencias
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-fs
