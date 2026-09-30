@@ -41,6 +41,28 @@ jobs:
             refactor
             test
 
+  docs-mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: AGENTS.md <-> CLAUDE.md espejo
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="origin/${{ github.base_ref }}"
+            RANGE="$BASE...HEAD"
+          else
+            RANGE="HEAD~1...HEAD"
+          fi
+          CHANGED=$(git diff --name-only "$RANGE" || true)
+          echo "$CHANGED" | grep -qx 'AGENTS.md' && HAS_AGENTS=1 || HAS_AGENTS=0
+          echo "$CHANGED" | grep -qx 'CLAUDE.md' && HAS_CLAUDE=1 || HAS_CLAUDE=0
+          if [ "$HAS_AGENTS" != "$HAS_CLAUDE" ]; then
+            echo "::error::AGENTS.md y CLAUDE.md deben actualizarse juntos (archivos espejo)."
+            exit 1
+          fi
+
   build-test:
     runs-on: ubuntu-latest
     steps:
