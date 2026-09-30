@@ -79,6 +79,9 @@ jobs:
 
   secrets-scan:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write # gitleaks comenta el hallazgo en el PR (gratis)
     steps:
       - uses: actions/checkout@v4
         with:

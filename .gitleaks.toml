@@ -1,0 +1,12 @@
+# SafeVision: extiende la config por defecto de gitleaks y silencia el falso
+# positivo de placeholders vacios en documentacion (AGENTS.md, CLAUDE.md,
+# *.example). Una asignacion sin valor (VAR=) no es un secreto filtrado.
+# Requiere gitleaks v8 (gitleaks/gitleaks-action@v2 la usa).
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Asignaciones de entorno sin valor (VAR=) no son leaks"
+regexTarget = "line"
+regexes = ["^[A-Z][A-Z0-9_]*=\\s*$"]

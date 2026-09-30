@@ -1,5 +1,7 @@
 package com.safevision.back.infrastructure.persistence;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import com.safevision.back.domain.model.Camera;
 import com.safevision.back.domain.model.Incident;
 import com.safevision.back.domain.model.Site;
@@ -24,8 +26,6 @@ import java.sql.DriverManager;
 import java.sql.Statement;
 import java.time.LocalDateTime;
 import java.util.List;
-
-import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Prueba {@code findByFilterPaged}/{@code countByFilter}
