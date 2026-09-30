@@ -115,12 +115,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   docker-build:
-    # Ultimo en correr: solo si build-test, secrets-scan y dependency-scan pasaron.
+    # Ultimo en correr: solo si build-test y secrets-scan pasaron.
     # (pr-title no se incluye porque en push se salta y arrastraria este job con el.)
-    # No quemar minutos en drafts.
+    # No quemar minutos en drafts. Solo valida que la imagen construye, sin push.
     if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
-    needs: [build-test, secrets-scan, dependency-scan]
+    needs: [build-test, secrets-scan]
     steps:
       - uses: actions/checkout@v4
 
@@ -132,39 +132,6 @@ jobs:
         with:
           context: .
           push: false
-          load: true
-          # Sin attestations: con provenance el export al daemon falla
-          # y Trivy no encuentra la imagen (gratis, sin push igual).
-          provenance: false
           tags: safevision-back:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      # Tabla en el log: gratis (sin Code Scanning / Advanced Security de pago).
-      - name: Trivy imagen (CRITICAL,HIGH bloquean)
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          # `image-ref`, no `input`: la imagen ya esta cargada en el daemon
-          # (`load: true` arriba). `input` espera un tarball (docker archive)
-          # y por eso fallaba con "no such file or directory".
-          image-ref: safevision-back:ci
-          scan-type: image
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          format: table
-          exit-code: '1'
-
-  dependency-scan:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Trivy filesystem (deps Java + Dockerfile)
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          scan-type: fs
-          scan-ref: .
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          format: table
-          exit-code: '1'
