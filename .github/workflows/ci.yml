@@ -93,10 +93,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   docker-build:
-    # No quemar minutos en drafts; corre solo si build-test paso.
+    # Ultimo en correr: solo si build-test, secrets-scan y dependency-scan pasaron.
+    # (pr-title no se incluye porque en push se salta y arrastraria este job con el.)
+    # No quemar minutos en drafts.
     if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
-    needs: [build-test]
+    needs: [build-test, secrets-scan, dependency-scan]
     steps:
       - uses: actions/checkout@v4
 
@@ -109,6 +111,9 @@ jobs:
           context: .
           push: false
           load: true
+          # Sin attestations: con provenance el export al daemon falla
+          # y Trivy no encuentra la imagen (gratis, sin push igual).
+          provenance: false
           tags: safevision-back:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max

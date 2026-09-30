@@ -7,6 +7,6 @@
 useDefault = true
 
 [allowlist]
-description = "Asignaciones de entorno sin valor (VAR=) no son leaks"
+description = "Asignaciones de entorno sin valor (VAR=) no son leaks (+/- prefijo de diff)"
 regexTarget = "line"
-regexes = ["^[A-Z][A-Z0-9_]*=\\s*$"]
+regexes = ["^[+\\- ]?[A-Z][A-Z0-9_]*=\\s*$"]
