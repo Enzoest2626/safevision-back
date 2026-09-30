@@ -2,11 +2,25 @@
 # positivo de placeholders vacios en documentacion (AGENTS.md, CLAUDE.md,
 # *.example). Una asignacion sin valor (VAR=) no es un secreto filtrado.
 # Requiere gitleaks v8 (gitleaks/gitleaks-action@v2 la usa).
+#
+# Por que regexTarget = "match" y no "line": la regla generic-api-key captura
+# el valor en la SIGUIENTE linea cuando la asignacion esta vacia, asi que el
+# match real es multilinea:
+#     JWT_SECRET=\nJWT_EXPIRATION_MINUTES=480
+# (secret = "JWT_EXPIRATION_MINUTES=480", entropy ~4.1). Con regexTarget="line"
+# la allowlist se evalua sobre una linea suelta ("JWT_SECRET=") y el regex
+# anclado con \s*$ nunca llega a cubrir el valor de la linea siguiente, por eso
+# el allowlist anterior no filtraba nada y el PR seguia en rojo.
+#
+# El regex exige "=" seguido de fin de linea: solo exime placeholders SIN valor.
+# Si la variable trae un valor real, el caracter tras "=" no es \n y el hallazgo
+# se reporta igual (verificado contra AWS/TELEGRAM/GitHub PAT de prueba).
 
 [extend]
 useDefault = true
 
 [allowlist]
-description = "Asignaciones de entorno sin valor (VAR=) no son leaks (+/- prefijo de diff)"
-regexTarget = "line"
-regexes = ["^[-+ ]?[A-Z][A-Z0-9_]*=\\s*$"]
+description = "Asignaciones de entorno sin valor (VAR= seguida de fin de linea) no son leaks"
+regexTarget = "match"
+# Comillas simples = TOML literal string: el regex se pasa tal cual, sin procesar escapes.
+regexes = ['^[A-Z][A-Z0-9_]*=\r?\n']
