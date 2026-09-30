@@ -144,7 +144,10 @@ jobs:
       - name: Trivy imagen (CRITICAL,HIGH bloquean)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          input: safevision-back:ci
+          # `image-ref`, no `input`: la imagen ya esta cargada en el daemon
+          # (`load: true` arriba). `input` espera un tarball (docker archive)
+          # y por eso fallaba con "no such file or directory".
+          image-ref: safevision-back:ci
           scan-type: image
           severity: CRITICAL,HIGH
           ignore-unfixed: true
