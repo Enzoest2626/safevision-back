@@ -131,7 +131,7 @@ public class IncidentService {
                         traceId, saved.id(), saved.externalId(), saved.workerId(), saved.siteId(), saved.cameraId()))
                 .flatMap(saved -> evidenceRepo.save(new Evidence(null, saved.id(), "PHOTO",
                                 frameB64, photoS3Key, null, null, now))
-                        .flatMap(evidence -> notificationService.notify(saved, camera, site, evidence, traceId)
+                        .flatMap(evidence -> notificationService.notify(saved, worker, camera, site, evidence, traceId)
                                 .thenReturn(saved)));
     }
 

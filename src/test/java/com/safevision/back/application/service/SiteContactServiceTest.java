@@ -43,12 +43,15 @@ class SiteContactServiceTest {
     }
 
     @Test
-    @DisplayName("findBySite retorna solo contactos activos de la obra")
-    void findBySite_retornaActivos() {
-        when(repository.findBySiteIdAndActiveTrue(SITE_ID)).thenReturn(Flux.just(contact));
+    @DisplayName("findBySite retorna todos los contactos de la obra, activos e inactivos")
+    void findBySite_retornaActivosEInactivos() {
+        SiteContact inactivo = new SiteContact(2L, SITE_ID, "De vacaciones", "999999999", "444555666",
+                null, false, LocalDateTime.now(), "system", LocalDateTime.now(), "system");
+        when(repository.findBySiteId(SITE_ID)).thenReturn(Flux.just(contact, inactivo));
 
         StepVerifier.create(service.findBySite(SITE_ID))
-                .assertNext(response -> assertThat(response.name()).isEqualTo("Supervisor"))
+                .expectNextMatches(response -> response.name().equals("Supervisor") && response.active())
+                .expectNextMatches(response -> response.name().equals("De vacaciones") && !response.active())
                 .verifyComplete();
     }
 
@@ -147,6 +150,48 @@ class SiteContactServiceTest {
         StepVerifier.create(service.update(SITE_ID, 1L, sinChatId, "supervisor1"))
                 .assertNext(response -> assertThat(response.telegramLinkCode()).isEqualTo("654321"))
                 .verifyComplete();
+    }
+
+    @Test
+    @DisplayName("setActive(false) pausa un contacto activo sin tocar su vinculo de Telegram")
+    void setActive_false_desactivaSinTocarVinculo() {
+        SiteContact vinculado = new SiteContact(1L, SITE_ID, "Supervisor", "999999999", "111222333",
+                null, true, LocalDateTime.now(), "system", LocalDateTime.now(), "system");
+        when(repository.findById(1L)).thenReturn(Mono.just(vinculado));
+        when(repository.save(any(SiteContact.class))).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+
+        StepVerifier.create(service.setActive(SITE_ID, 1L, false, "supervisor1"))
+                .assertNext(response -> {
+                    assertThat(response.active()).isFalse();
+                    assertThat(response.telegramChatId()).isEqualTo("111222333");
+                })
+                .verifyComplete();
+    }
+
+    @Test
+    @DisplayName("setActive(true) reactiva un contacto previamente pausado")
+    void setActive_true_reactivaUnoPausado() {
+        SiteContact pausado = new SiteContact(1L, SITE_ID, "Supervisor", "999999999", "111222333",
+                null, false, LocalDateTime.now(), "system", LocalDateTime.now(), "system");
+        when(repository.findById(1L)).thenReturn(Mono.just(pausado));
+        when(repository.save(any(SiteContact.class))).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+
+        StepVerifier.create(service.setActive(SITE_ID, 1L, true, "supervisor1"))
+                .assertNext(response -> assertThat(response.active()).isTrue())
+                .verifyComplete();
+    }
+
+    @Test
+    @DisplayName("setActive sobre contacto de otra obra lanza 404")
+    void setActive_contactoDeOtraObra_lanzaNotFound() {
+        when(repository.findById(1L)).thenReturn(Mono.just(contact));
+
+        StepVerifier.create(service.setActive(999L, 1L, false, "supervisor1"))
+                .expectErrorMatches(ex -> ex instanceof ResponseStatusException rse
+                        && rse.getStatusCode() == HttpStatus.NOT_FOUND)
+                .verify();
+
+        verify(repository, never()).save(any());
     }
 
     @Test

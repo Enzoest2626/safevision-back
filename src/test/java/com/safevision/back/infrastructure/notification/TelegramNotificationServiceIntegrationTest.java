@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.safevision.back.domain.model.Camera;
 import com.safevision.back.domain.model.Incident;
 import com.safevision.back.domain.model.Site;
+import com.safevision.back.domain.model.Worker;
 import com.safevision.back.infrastructure.config.TelegramProperties;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -36,6 +37,8 @@ class TelegramNotificationServiceIntegrationTest {
 
     private static final int N = 3; // bajo a propósito: evita el rate-limit de Telegram (~1 msg/s por chat)
 
+    private final Worker worker = new Worker(10L, 1L, 3, "Juan", "Perez", "Albañil",
+            true, LocalDateTime.now(), "system", LocalDateTime.now(), "system");
     private final Camera camera = new Camera(20L, 1L, null, "CAM-01", "Entrada", "10.0.0.5", null,
             true, LocalDateTime.now(), "system", LocalDateTime.now(), "system");
     private final Site site = new Site(1L, "OBRA-1", "Main-Site", "Lima", 60, true,
@@ -64,7 +67,7 @@ class TelegramNotificationServiceIntegrationTest {
         List<Long> secuencialesMs = new ArrayList<>();
         for (int i = 0; i < N; i++) {
             long start = System.currentTimeMillis();
-            service.sendIncidentAlert(chatId, sampleIncident(i), camera, site, "", FRAME_B64).block();
+            service.sendIncidentAlert(chatId, sampleIncident(i), worker, camera, site, "", FRAME_B64).block();
             long elapsed = System.currentTimeMillis() - start;
             secuencialesMs.add(elapsed);
             System.out.println(" Secuencial #" + (i + 1) + " → " + elapsed + " ms");
@@ -73,7 +76,7 @@ class TelegramNotificationServiceIntegrationTest {
         List<Long> concurrentesMs = Flux.range(0, N)
                 .flatMap(i -> {
                     long start = System.currentTimeMillis();
-                    return service.sendIncidentAlert(chatId, sampleIncident(100 + i), camera, site, "", FRAME_B64)
+                    return service.sendIncidentAlert(chatId, sampleIncident(100 + i), worker, camera, site, "", FRAME_B64)
                             .then(Mono.fromCallable(() -> System.currentTimeMillis() - start));
                 })
                 .collectList()

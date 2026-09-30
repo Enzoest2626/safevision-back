@@ -24,8 +24,10 @@ public class SiteContactService {
         this.repository = repository;
     }
 
+    /** Todos los contactos de la obra, activos e inactivos — la pantalla de
+     * gestión necesita ver (y poder reactivar) a los que están en pausa. */
     public Flux<SiteContactResponse> findBySite(Long siteId) {
-        return repository.findBySiteIdAndActiveTrue(siteId)
+        return repository.findBySiteId(siteId)
                 .map(SiteContactResponse::from);
     }
 
@@ -79,6 +81,29 @@ public class SiteContactService {
                     return repository.save(deactivated);
                 })
                 .then();
+    }
+
+    /**
+     * Pausa o reanuda las alertas de un contacto sin tocar su vínculo de
+     * Telegram (chat_id/código pendiente quedan intactos) — a diferencia de
+     * {@link #delete}, funciona en ambos sentidos: sirve para reactivar a
+     * alguien que estaba desactivado (ej. volvió de vacaciones).
+     */
+    public Mono<SiteContactResponse> setActive(Long siteId, Long contactId, boolean active, String updatedBy) {
+        return repository.findById(contactId)
+                .filter(c -> c.siteId().equals(siteId))
+                .switchIfEmpty(Mono.error(
+                        new ResponseStatusException(HttpStatus.NOT_FOUND, "Contact not found")))
+                .flatMap(existing -> {
+                    SiteContact updated = new SiteContact(
+                            existing.id(), siteId, existing.name(), existing.phone(),
+                            existing.telegramChatId(), existing.telegramLinkCode(), active,
+                            existing.createdAt(), existing.createdBy(),
+                            LocalDateTime.now(), updatedBy
+                    );
+                    return repository.save(updated);
+                })
+                .map(SiteContactResponse::from);
     }
 
     /**

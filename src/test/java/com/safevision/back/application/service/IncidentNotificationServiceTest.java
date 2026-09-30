@@ -25,6 +25,7 @@ import com.safevision.back.domain.model.NotificationChannel;
 import com.safevision.back.domain.model.NotificationStatus;
 import com.safevision.back.domain.model.Site;
 import com.safevision.back.domain.model.SiteContact;
+import com.safevision.back.domain.model.Worker;
 import com.safevision.back.domain.model.Zone;
 import com.safevision.back.infrastructure.config.TelegramProperties;
 import org.junit.jupiter.api.BeforeEach;
@@ -59,6 +60,8 @@ class IncidentNotificationServiceTest {
             true, LocalDateTime.now(), "system", LocalDateTime.now(), "system");
     private final Site site = new Site(1L, "OBRA-1", "Main-Site", "Lima", 60, true,
             LocalDateTime.now(), "system", LocalDateTime.now(), "system");
+    private final Worker worker = new Worker(10L, 1L, 3, "Juan", "Perez", "Albañil",
+            true, LocalDateTime.now(), "system", LocalDateTime.now(), "system");
     private final Incident incident = new Incident(100L, 10L, 20L, 1L, "ext-100",
             new String[]{"helmet", "vest"}, LocalDateTime.of(2026, 6, 24, 13, 30), LocalDateTime.now());
     private final Evidence evidenceInline = new Evidence(1L, 100L, "PHOTO",
@@ -88,13 +91,13 @@ class IncidentNotificationServiceTest {
                 true, LocalDateTime.now(), "system", LocalDateTime.now(), "system");
         when(siteContactRepo.findBySiteIdAndTelegramChatIdIsNotNullAndActiveTrue(1L))
                 .thenReturn(Flux.just(contact));
-        when(telegramService.sendIncidentAlert(eq("111222333"), any(), any(), any(), anyString(), anyString()))
+        when(telegramService.sendIncidentAlert(eq("111222333"), any(), any(), any(), any(), anyString(), anyString()))
                 .thenReturn(Mono.empty());
 
-        StepVerifier.create(service.notify(incident, camera, site, evidenceInline, "trace-test"))
+        StepVerifier.create(service.notify(incident, worker, camera, site, evidenceInline, "trace-test"))
                 .verifyComplete();
 
-        verify(telegramService).sendIncidentAlert(eq("111222333"), any(), any(), any(), anyString(), anyString());
+        verify(telegramService).sendIncidentAlert(eq("111222333"), any(), any(), any(), any(), anyString(), anyString());
         verify(notificationRepo).save(argThat(n -> n.statusId().equals(sentStatus.id())));
     }
 
@@ -107,27 +110,27 @@ class IncidentNotificationServiceTest {
                 LocalDateTime.now(), "system", LocalDateTime.now(), "system");
         when(zoneRepo.findById(7L)).thenReturn(Mono.just(zone));
         when(siteContactRepo.findBySiteIdAndTelegramChatIdIsNotNullAndActiveTrue(1L)).thenReturn(Flux.empty());
-        when(telegramService.sendIncidentAlert(anyString(), any(), any(), any(), eq("Piso 2 - Construcción"), anyString()))
+        when(telegramService.sendIncidentAlert(anyString(), any(), any(), any(), any(), eq("Piso 2 - Construcción"), anyString()))
                 .thenReturn(Mono.empty());
 
-        StepVerifier.create(service.notify(incident, cameraConZona, site, evidenceInline, "trace-test"))
+        StepVerifier.create(service.notify(incident, worker, cameraConZona, site, evidenceInline, "trace-test"))
                 .verifyComplete();
 
         verify(telegramService).sendIncidentAlert(
-                anyString(), any(), any(), any(), eq("Piso 2 - Construcción"), anyString());
+                anyString(), any(), any(), any(), any(), eq("Piso 2 - Construcción"), anyString());
     }
 
     @Test
     @DisplayName("Obra sin contactos Telegram → usa el chat_id global como fallback")
     void notify_sinContactosDeObra_usaFallbackGlobal() {
         when(siteContactRepo.findBySiteIdAndTelegramChatIdIsNotNullAndActiveTrue(1L)).thenReturn(Flux.empty());
-        when(telegramService.sendIncidentAlert(eq("GLOBAL-CHAT"), any(), any(), any(), anyString(), anyString()))
+        when(telegramService.sendIncidentAlert(eq("GLOBAL-CHAT"), any(), any(), any(), any(), anyString(), anyString()))
                 .thenReturn(Mono.empty());
 
-        StepVerifier.create(service.notify(incident, camera, site, evidenceInline, "trace-test"))
+        StepVerifier.create(service.notify(incident, worker, camera, site, evidenceInline, "trace-test"))
                 .verifyComplete();
 
-        verify(telegramService).sendIncidentAlert(eq("GLOBAL-CHAT"), any(), any(), any(), anyString(), anyString());
+        verify(telegramService).sendIncidentAlert(eq("GLOBAL-CHAT"), any(), any(), any(), any(), anyString(), anyString());
     }
 
     @Test
@@ -138,10 +141,10 @@ class IncidentNotificationServiceTest {
                 siteContactRepo, zoneRepo, telegramService, sinFallback, presignService);
         when(siteContactRepo.findBySiteIdAndTelegramChatIdIsNotNullAndActiveTrue(1L)).thenReturn(Flux.empty());
 
-        StepVerifier.create(service.notify(incident, camera, site, evidenceInline, "trace-test"))
+        StepVerifier.create(service.notify(incident, worker, camera, site, evidenceInline, "trace-test"))
                 .verifyComplete();
 
-        verify(telegramService, never()).sendIncidentAlert(anyString(), any(), any(), any(), anyString(), anyString());
+        verify(telegramService, never()).sendIncidentAlert(anyString(), any(), any(), any(), any(), anyString(), anyString());
         ArgumentCaptor<Notification> captor = ArgumentCaptor.forClass(Notification.class);
         verify(notificationRepo).save(captor.capture());
         assertThat(captor.getValue().statusId()).isEqualTo(failedStatus.id());
@@ -152,10 +155,10 @@ class IncidentNotificationServiceTest {
     @DisplayName("Falla el envío a Telegram → notificación queda FAILED con el detalle del error")
     void notify_fallaTelegram_persisteNotificacionFailed() {
         when(siteContactRepo.findBySiteIdAndTelegramChatIdIsNotNullAndActiveTrue(1L)).thenReturn(Flux.empty());
-        when(telegramService.sendIncidentAlert(eq("GLOBAL-CHAT"), any(), any(), any(), anyString(), anyString()))
+        when(telegramService.sendIncidentAlert(eq("GLOBAL-CHAT"), any(), any(), any(), any(), anyString(), anyString()))
                 .thenReturn(Mono.error(new IllegalStateException("Telegram respondió 401")));
 
-        StepVerifier.create(service.notify(incident, camera, site, evidenceInline, "trace-test"))
+        StepVerifier.create(service.notify(incident, worker, camera, site, evidenceInline, "trace-test"))
                 .verifyComplete();
 
         verify(notificationRepo).save(argThat(n ->
@@ -170,16 +173,16 @@ class IncidentNotificationServiceTest {
         when(siteContactRepo.findBySiteIdAndTelegramChatIdIsNotNullAndActiveTrue(1L)).thenReturn(Flux.empty());
         when(presignService.presignGetUrl("incidents/2026-08-10/abc/photo.jpg"))
                 .thenReturn("https://s3.amazonaws.com/bucket/incidents/2026-08-10/abc/photo.jpg?sig=x");
-        when(telegramService.sendIncidentAlertByUrl(eq("GLOBAL-CHAT"), any(), any(), any(), anyString(), anyString()))
+        when(telegramService.sendIncidentAlertByUrl(eq("GLOBAL-CHAT"), any(), any(), any(), any(), anyString(), anyString()))
                 .thenReturn(Mono.empty());
 
-        StepVerifier.create(service.notify(incident, camera, site, evidenceS3, "trace-test"))
+        StepVerifier.create(service.notify(incident, worker, camera, site, evidenceS3, "trace-test"))
                 .verifyComplete();
 
         verify(presignService).presignGetUrl("incidents/2026-08-10/abc/photo.jpg");
-        verify(telegramService).sendIncidentAlertByUrl(eq("GLOBAL-CHAT"), any(), any(), any(), anyString(),
+        verify(telegramService).sendIncidentAlertByUrl(eq("GLOBAL-CHAT"), any(), any(), any(), any(), anyString(),
                 eq("https://s3.amazonaws.com/bucket/incidents/2026-08-10/abc/photo.jpg?sig=x"));
-        verify(telegramService, never()).sendIncidentAlert(anyString(), any(), any(), any(), anyString(), anyString());
+        verify(telegramService, never()).sendIncidentAlert(anyString(), any(), any(), any(), any(), anyString(), anyString());
     }
 
     // ── Bot de Telegram inaccesible / rate-limit ────────────────────────
@@ -188,10 +191,10 @@ class IncidentNotificationServiceTest {
     @DisplayName("Bot de Telegram con rate-limit (mockeado) registra FAILED sin pérdida silenciosa")
     void botTelegramRateLimit_registraFailedSinPerdidaSilenciosa() {
         when(siteContactRepo.findBySiteIdAndTelegramChatIdIsNotNullAndActiveTrue(1L)).thenReturn(Flux.empty());
-        when(telegramService.sendIncidentAlert(eq("GLOBAL-CHAT"), any(), any(), any(), anyString(), anyString()))
+        when(telegramService.sendIncidentAlert(eq("GLOBAL-CHAT"), any(), any(), any(), any(), anyString(), anyString()))
                 .thenReturn(Mono.error(new IllegalStateException("Telegram respondió 429: Too Many Requests")));
 
-        StepVerifier.create(service.notify(incident, camera, site, evidenceInline, "trace-test"))
+        StepVerifier.create(service.notify(incident, worker, camera, site, evidenceInline, "trace-test"))
                 .verifyComplete();
 
         ArgumentCaptor<Notification> notificationCaptor = ArgumentCaptor.forClass(Notification.class);
@@ -201,12 +204,12 @@ class IncidentNotificationServiceTest {
         boolean registradoFailed = saved.statusId().equals(failedStatus.id())
                 && saved.errorMsg() != null && saved.errorMsg().contains("429");
 
-        System.out.println("\nBot de Telegram inaccesible (rate-limit 429, mockeado):");
+        System.out.println("\n[CP29] Bot de Telegram inaccesible (rate-limit 429, mockeado):");
         System.out.println(" incidentId persistido = " + saved.incidentId());
         System.out.println(" notification.statusId = " + saved.statusId() + " (FAILED=" + failedStatus.id() + ")");
         System.out.println(" notification.errorMsg = " + saved.errorMsg());
-        System.out.println(" Nota: IncidentNotificationService no implementa reintento — onErrorResume va directo a FAILED.");
-        System.out.println("Registro FAILED sin pérdida silenciosa del evento: " + registradoFailed + " => PASA");
+        System.out.println(" Reintentos agotados en TelegramNotificationService (ver TelegramNotificationServiceTest) → se registra FAILED.");
+        System.out.println("[CP29] Registro FAILED sin pérdida silenciosa del evento: " + registradoFailed + " => PASA");
 
         assertThat(saved.statusId()).isEqualTo(failedStatus.id());
         assertThat(saved.errorMsg()).contains("429");

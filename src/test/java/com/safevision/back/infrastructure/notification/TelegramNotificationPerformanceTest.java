@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.safevision.back.domain.model.Camera;
 import com.safevision.back.domain.model.Incident;
 import com.safevision.back.domain.model.Site;
+import com.safevision.back.domain.model.Worker;
 import com.safevision.back.infrastructure.config.TelegramProperties;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -46,6 +47,8 @@ class TelegramNotificationPerformanceTest {
     private TelegramNotificationService service;
     private Incident incident;
     private Camera camera;
+    private final Worker worker = new Worker(10L, 1L, 3, "Juan", "Perez", "Albañil",
+            true, LocalDateTime.now(), "system", LocalDateTime.now(), "system");
     private Site site;
 
     @BeforeEach
@@ -110,7 +113,7 @@ class TelegramNotificationPerformanceTest {
     }
 
     private reactor.core.publisher.Mono<Void> sendOne(int sequence) {
-        return service.sendIncidentAlert("chat-1", incident, camera, site, "", FRAME_B64);
+        return service.sendIncidentAlert("chat-1", incident, worker, camera, site, "", FRAME_B64);
     }
 
     private void handleTelegramRequest(HttpExchange exchange) throws IOException {

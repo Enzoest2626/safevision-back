@@ -3,6 +3,7 @@ package com.safevision.back.application.ports.out;
 import com.safevision.back.domain.model.Camera;
 import com.safevision.back.domain.model.Incident;
 import com.safevision.back.domain.model.Site;
+import com.safevision.back.domain.model.Worker;
 import reactor.core.publisher.Mono;
 
 /**
@@ -12,9 +13,9 @@ import reactor.core.publisher.Mono;
  */
 public interface NotificationChannelPort {
 
-    Mono<Void> sendIncidentAlert(String chatId, Incident incident, Camera camera, Site site,
+    Mono<Void> sendIncidentAlert(String chatId, Incident incident, Worker worker, Camera camera, Site site,
                                   String zoneName, String frameB64);
 
-    Mono<Void> sendIncidentAlertByUrl(String chatId, Incident incident, Camera camera, Site site,
+    Mono<Void> sendIncidentAlertByUrl(String chatId, Incident incident, Worker worker, Camera camera, Site site,
                                        String zoneName, String photoUrl);
 }

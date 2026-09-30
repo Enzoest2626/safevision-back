@@ -2,12 +2,14 @@ package com.safevision.back.infrastructure.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
 import com.safevision.back.application.service.SiteContactService;
 import com.safevision.back.infrastructure.web.dto.ApiEnvelope;
+import com.safevision.back.infrastructure.web.dto.SetActiveRequest;
 import com.safevision.back.infrastructure.web.dto.SiteContactRequest;
 import com.safevision.back.infrastructure.web.dto.SiteContactResponse;
 import org.junit.jupiter.api.BeforeEach;
@@ -111,6 +113,29 @@ class SiteContactControllerTest {
                 .bodyValue(new SiteContactRequest("Supervisor", "999999999", "111222333"))
                 .exchange()
                 .expectStatus().isNotFound();
+    }
+
+    @Test
+    @DisplayName("PUT /api/v1/sites/{siteId}/contacts/{contactId}/active retorna 200")
+    void setActive_retorna200() {
+        when(service.setActive(anyLong(), anyLong(), anyBoolean(), anyString()))
+                .thenReturn(Mono.just(sampleResponse));
+
+        client.put().uri("/sites/{siteId}/contacts/{contactId}/active", SITE_ID, 1L)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(new SetActiveRequest(false))
+                .exchange()
+                .expectStatus().isOk();
+    }
+
+    @Test
+    @DisplayName("PUT /api/v1/sites/{siteId}/contacts/{contactId}/active sin 'active' retorna 400")
+    void setActive_sinCampoActive_retorna400() {
+        client.put().uri("/sites/{siteId}/contacts/{contactId}/active", SITE_ID, 1L)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{}")
+                .exchange()
+                .expectStatus().isBadRequest();
     }
 
     @Test

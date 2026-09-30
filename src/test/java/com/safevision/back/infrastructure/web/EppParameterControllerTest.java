@@ -3,6 +3,8 @@ package com.safevision.back.infrastructure.web;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.safevision.back.application.service.EppParameterService;
@@ -143,5 +145,26 @@ class EppParameterControllerTest {
                 .bodyValue("{\"requiredEpp\":[\"casco_minero\"],\"cooldownSeconds\":60}")
                 .exchange()
                 .expectStatus().isBadRequest();
+    }
+
+    @Test
+    @DisplayName("PUT con tipo de dato incorrecto (cooldownSeconds texto, requiredEpp no lista) retorna 400")
+    void put_tipoDeDatoIncorrecto_retorna400() {
+        client.put().uri("/parameters/{siteId}", SITE_ID)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"requiredEpp\":[\"casco\"],\"cooldownSeconds\":\"abc\"}")
+                .exchange()
+                .expectStatus().isBadRequest();
+        client.put().uri("/parameters/{siteId}", SITE_ID)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"requiredEpp\":\"casco\",\"cooldownSeconds\":60}")
+                .exchange()
+                .expectStatus().isBadRequest();
+
+        verify(service, never()).updateForSite(anyLong(), any(EppParameterRequest.class), anyString());
+        System.out.println("\n[CP17] PUT /api/v1/parameters/" + SITE_ID + " — tipo de dato incorrecto:");
+        System.out.println("       cooldownSeconds = \"abc\" (texto)  -> 400");
+        System.out.println("       requiredEpp     = \"casco\" (no lista) -> 400");
+        System.out.println("[CP17] Rechazado sin llegar al servicio, nada persistido => PASA");
     }
 }

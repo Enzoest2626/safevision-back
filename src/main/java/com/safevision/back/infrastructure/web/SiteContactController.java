@@ -2,6 +2,7 @@ package com.safevision.back.infrastructure.web;
 
 import com.safevision.back.application.service.SiteContactService;
 import com.safevision.back.infrastructure.web.dto.ApiEnvelope;
+import com.safevision.back.infrastructure.web.dto.SetActiveRequest;
 import com.safevision.back.infrastructure.web.dto.SiteContactRequest;
 import com.safevision.back.infrastructure.web.dto.SiteContactResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -36,7 +37,7 @@ public class SiteContactController {
     }
 
     @GetMapping
-    @Operation(summary = "Listar contactos activos de una obra")
+    @Operation(summary = "Listar contactos de una obra (activos e inactivos)")
     @ApiResponse(responseCode = "200", description = "Lista de contactos")
     public Mono<ApiEnvelope<List<SiteContactResponse>>> findBySite(@PathVariable Long siteId) {
         return ApiEnvelope.wrapList(service.findBySite(siteId), HttpStatus.OK);
@@ -64,6 +65,18 @@ public class SiteContactController {
             @Valid @RequestBody SiteContactRequest request,
             @RequestAttribute("username") String username) {
         return ApiEnvelope.wrap(service.update(siteId, contactId, request, username), HttpStatus.OK);
+    }
+
+    @PutMapping("/{contactId}/active")
+    @Operation(summary = "Activar o desactivar un contacto (pausa alertas sin perder el vínculo de Telegram)",
+               security = @SecurityRequirement(name = "bearerAuth"))
+    @ApiResponse(responseCode = "200", description = "Estado actualizado")
+    public Mono<ApiEnvelope<SiteContactResponse>> setActive(
+            @PathVariable Long siteId,
+            @PathVariable Long contactId,
+            @Valid @RequestBody SetActiveRequest request,
+            @RequestAttribute("username") String username) {
+        return ApiEnvelope.wrap(service.setActive(siteId, contactId, request.active(), username), HttpStatus.OK);
     }
 
     @DeleteMapping("/{contactId}")

@@ -77,7 +77,7 @@ class IncidentServiceTest {
                             i.missingEpp(), i.occurredAt(), i.createdAt()));
                 });
         lenient().when(evidenceRepo.save(any(Evidence.class))).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
-        lenient().when(notificationService.notify(any(), any(), any(), any(Evidence.class), anyString())).thenReturn(Mono.empty());
+        lenient().when(notificationService.notify(any(), any(), any(), any(), any(Evidence.class), anyString())).thenReturn(Mono.empty());
     }
 
     @Test
@@ -94,7 +94,7 @@ class IncidentServiceTest {
                 .verifyComplete();
 
         verify(evidenceRepo).save(any(Evidence.class));
-        verify(notificationService).notify(any(Incident.class), eq(camera), eq(site), any(Evidence.class), anyString());
+        verify(notificationService).notify(any(Incident.class), eq(worker), eq(camera), eq(site), any(Evidence.class), anyString());
     }
 
     @Test
@@ -107,7 +107,7 @@ class IncidentServiceTest {
                 .verifyComplete();
 
         ArgumentCaptor<Incident> incidentCaptor = ArgumentCaptor.forClass(Incident.class);
-        verify(notificationService).notify(incidentCaptor.capture(), eq(camera), eq(site), any(Evidence.class), anyString());
+        verify(notificationService).notify(incidentCaptor.capture(), eq(worker), eq(camera), eq(site), any(Evidence.class), anyString());
         Incident incidentEnviado = incidentCaptor.getValue();
 
         assertThat(incidentEnviado.workerId()).isEqualTo(10L);
@@ -126,7 +126,7 @@ class IncidentServiceTest {
                 .verify();
 
         verify(incidentRepo, never()).save(any());
-        verify(notificationService, never()).notify(any(), any(), any(), any(Evidence.class), anyString());
+        verify(notificationService, never()).notify(any(), any(), any(), any(), any(Evidence.class), anyString());
     }
 
     @Test
@@ -180,7 +180,7 @@ class IncidentServiceTest {
         assertThat(evidenceCaptor.getValue().storageKey()).isEqualTo("incidents/2026-08-10/cv-uuid-1/photo.jpg");
         assertThat(evidenceCaptor.getValue().frameB64()).isNull();
 
-        verify(notificationService).notify(any(Incident.class), eq(camera), eq(site), any(Evidence.class), eq("trace-mqtt"));
+        verify(notificationService).notify(any(Incident.class), eq(worker), eq(camera), eq(site), any(Evidence.class), eq("trace-mqtt"));
     }
 
     @Test
@@ -232,7 +232,7 @@ class IncidentServiceTest {
         assertThat(saved.durationSeconds()).isEqualTo(10.0);
         assertThat(saved.fileSizeBytes()).isEqualTo(4831201L);
 
-        verify(notificationService, never()).notify(any(), any(), any(), any(Evidence.class), anyString());
+        verify(notificationService, never()).notify(any(), any(), any(), any(), any(Evidence.class), anyString());
     }
 
     @Test

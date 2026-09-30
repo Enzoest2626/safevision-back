@@ -11,6 +11,9 @@ public interface SiteContactRepositoryPort extends ReactiveCrudRepository<SiteCo
 
     Flux<SiteContact> findBySiteIdAndActiveTrue(Long siteId);
 
+    /** Todos los contactos de la obra, activos e inactivos — para la pantalla de gestión. */
+    Flux<SiteContact> findBySiteId(Long siteId);
+
     /** Contactos con Telegram configurado — usados por el adaptador de alertas. */
     Flux<SiteContact> findBySiteIdAndTelegramChatIdIsNotNullAndActiveTrue(Long siteId);
 

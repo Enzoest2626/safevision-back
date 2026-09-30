@@ -146,6 +146,40 @@ class IncidentControllerTest {
     }
 
     @Test
+    @DisplayName("CP31 — POST /api/v1/cv/incidents sin incumplimiento (missing_epp vacío) retorna 400 y no registra ni notifica")
+    void registerFromCv_sinIncumplimiento_noRegistraNiNotifica() {
+        client.post().uri("/cv/incidents")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"incident_id":"cv-uuid-2","worker_code":3,"missing_epp":[],
+                         "timestamp":"2026-06-24T13:30:00","camera_code":"CAM-01","site_name":"Main-Site",
+                         "photo_s3_key":"incidents/2026-08-10/cv-uuid-2/photo.jpg"}
+                        """)
+                .exchange()
+                .expectStatus().isBadRequest();
+
+        // @NotEmpty corta antes del servicio: ni incidente, ni evidencia, ni Telegram
+        verify(service, never()).registerFromCv(any(), any());
+
+        System.out.println("\n[CP31] Evaluación conforme (missing_epp vacío) — flujo activo /cv/incidents:");
+        System.out.println("       Respuesta HTTP           = 400 (validación @NotEmpty)");
+        System.out.println("       registerFromCv() llamado = nunca");
+        System.out.println("[CP31] No se registra incidente ni se notifica por Telegram => PASA");
+    }
+
+    @Test
+    @DisplayName("POST /api/v1/cv/incidents sin campos obligatorios retorna 400")
+    void registerFromCv_camposObligatoriosFaltantes_retorna400() {
+        client.post().uri("/cv/incidents")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"worker_code\":3}")
+                .exchange()
+                .expectStatus().isBadRequest();
+
+        verify(service, never()).registerFromCv(any(), any());
+    }
+
+    @Test
     @DisplayName("POST /api/v1/cv/incidents/clips con payload válido retorna 200")
     void registerClip_retorna200() {
         when(service.registerClipReady(any(CvClipReadyMessage.class))).thenReturn(Mono.empty());

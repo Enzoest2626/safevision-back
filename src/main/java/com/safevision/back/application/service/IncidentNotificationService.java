@@ -13,6 +13,7 @@ import com.safevision.back.domain.model.Incident;
 import com.safevision.back.domain.model.Notification;
 import com.safevision.back.domain.model.Site;
 import com.safevision.back.domain.model.SiteContact;
+import com.safevision.back.domain.model.Worker;
 import com.safevision.back.domain.model.Zone;
 import com.safevision.back.infrastructure.config.TelegramProperties;
 import org.slf4j.Logger;
@@ -71,7 +72,8 @@ public class IncidentNotificationService {
      * ({@code storageKey}, flujo CV nuevo), o por bytes inline si trae
      * {@code frameB64} (flujo HTTP legacy, sin cambios de comportamiento).
      */
-    public Mono<Void> notify(Incident incident, Camera camera, Site site, Evidence evidence, String traceId) {
+    public Mono<Void> notify(Incident incident, Worker worker, Camera camera, Site site, Evidence evidence,
+                             String traceId) {
         return Mono.zip(resolveChatIds(site.id()), resolveZoneName(camera))
                 .flatMap(resolved -> {
                     List<String> chatIds = resolved.getT1();
@@ -85,7 +87,8 @@ public class IncidentNotificationService {
                     log.info("Contactos Telegram resueltos | trace_id={} incident_id={} chats={}",
                             traceId, incident.id(), chatIds.size());
                     return Flux.fromIterable(chatIds)
-                            .flatMap(chatId -> sendAndRecord(chatId, incident, camera, site, zoneName, evidence, traceId))
+                            .flatMap(chatId -> sendAndRecord(chatId, incident, worker, camera, site, zoneName,
+                                    evidence, traceId))
                             .then();
                 });
     }
@@ -111,12 +114,13 @@ public class IncidentNotificationService {
                 });
     }
 
-    private Mono<Void> sendAndRecord(String chatId, Incident incident, Camera camera, Site site,
+    private Mono<Void> sendAndRecord(String chatId, Incident incident, Worker worker, Camera camera, Site site,
                                       String zoneName, Evidence evidence, String traceId) {
         Mono<Void> send = evidence.storageKey() != null
-                ? telegramService.sendIncidentAlertByUrl(chatId, incident, camera, site, zoneName,
+                ? telegramService.sendIncidentAlertByUrl(chatId, incident, worker, camera, site, zoneName,
                         presignService.presignGetUrl(evidence.storageKey()))
-                : telegramService.sendIncidentAlert(chatId, incident, camera, site, zoneName, evidence.frameB64());
+                : telegramService.sendIncidentAlert(chatId, incident, worker, camera, site, zoneName,
+                        evidence.frameB64());
 
         return send
                 .doOnSuccess(v -> log.info("Notificación Telegram enviada | trace_id={} incident_id={} chat_id={}",

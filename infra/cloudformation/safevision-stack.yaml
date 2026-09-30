@@ -3,10 +3,15 @@ Description: >
   SafeVision — demo en vivo. Crea RDS + 2 EC2 (backend, CV) con bootstrap
   100% automatico via UserData: instala Docker, hace pull de las imagenes ya
   publicadas en ECR (ver infra/deploy.sh, funcion do_build_and_push) y deja
-  los servicios corriendo solos, sin SSH manual. Los repositorios ECR y el
-  bucket S3 de assets (SQL + videos) son recursos persistentes, fuera de
-  este stack — solo compute (RDS + EC2) es efimero, pensado para crearse y
-  borrarse por sesion de demo (aws cloudformation delete-stack).
+  los servicios corriendo solos, sin SSH manual. Los repositorios ECR y los
+  buckets S3 (assets: SQL + videos; evidencia: foto + clip de cada incidente)
+  son recursos persistentes, fuera de este stack — solo compute (RDS + EC2)
+  es efimero, pensado para crearse y borrarse por sesion de demo.
+
+  Flujo que despliega (arquitectura actual, HTTP directo sin broker):
+    CV  -> S3 (evidencia)  -> POST backend /api/v1/cv/incidents(/clips)
+    backend -> URL prefirmada S3 -> Telegram
+    backend -> POST CV :5001 /webhook/rules y /webhook/config (camera.ip_address)
 
 Parameters:
   VpcId:
@@ -37,23 +42,24 @@ Parameters:
     Type: String
     Description: >
       Bucket S3 (ya existente, poblado con infra/deploy.sh upload) con
-      sql/init-schema.sql, sql/seed-data.sql y videos/. El JAR y el codigo
-      del modulo CV ya no viven aca — van dentro de las imagenes Docker en
-      ECR (ver EcrBackendRepoName / EcrCvRepoName).
+      sql/init-schema.sql, sql/seed-data.sql y videos/.
+
+  EvidenceBucketName:
+    Type: String
+    Description: >
+      Bucket S3 (ya existente, lo crea infra/deploy.sh con expiracion a 60
+      dias) donde el CV sube la foto y el clip de cada incidente. El backend
+      solo lee de aca para generar URLs prefirmadas.
 
   EcrBackendRepoName:
     Type: String
     Default: safevision-backend
-    Description: >
-      Nombre del repositorio ECR (ya existente, poblado con
-      infra/deploy.sh build) con la imagen del backend.
+    Description: Repositorio ECR (ya existente, poblado con infra/deploy.sh build) con la imagen del backend.
 
   EcrCvRepoName:
     Type: String
     Default: safevision-cv
-    Description: >
-      Nombre del repositorio ECR (ya existente, poblado con
-      infra/deploy.sh build) con la imagen del modulo CV.
+    Description: Repositorio ECR (ya existente, poblado con infra/deploy.sh build) con la imagen del modulo CV.
 
   DbMasterPassword:
     Type: String
@@ -66,7 +72,13 @@ Parameters:
   AlertServiceToken:
     Type: String
     NoEcho: true
-    Description: Bearer token compartido entre el modulo CV y el backend.
+    Description: Bearer token compartido entre el modulo CV y el backend (ingesta /api/v1/cv/**).
+
+  JwtSecret:
+    Type: String
+    NoEcho: true
+    MinLength: 32
+    Description: Firma de los JWT de /api/v1/auth/login (minimo 32 bytes).
 
   TelegramBotToken:
     Type: String
@@ -75,6 +87,21 @@ Parameters:
   TelegramChatId:
     Type: String
     NoEcho: true
+
+  CvWebhookPort:
+    Type: Number
+    Default: 5001
+    Description: Puerto del webhook HTTP del CV (/webhook/rules, /webhook/config).
+
+  CameraCode:
+    Type: String
+    Default: CAM-01
+    Description: Codigo de la camara del seed (docs/seed-data.sql) que atiende la EC2 de CV.
+
+  SiteName:
+    Type: String
+    Default: Obra-Principal
+    Description: Nombre de la obra del seed (docs/seed-data.sql).
 
   LatestUbuntuAmiId:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
@@ -101,6 +128,7 @@ Resources:
           FromPort: 8554
           ToPort: 8554
           CidrIp: !Ref MyIpCidr
+          Description: RTSP (mediamtx) - para publicar video desde tu maquina
       Tags:
         - Key: Name
           Value: sg-cv
@@ -119,10 +147,12 @@ Resources:
           FromPort: 8080
           ToPort: 8080
           CidrIp: !Ref MyIpCidr
+          Description: API + Swagger desde tu maquina
         - IpProtocol: tcp
           FromPort: 8080
           ToPort: 8080
           SourceSecurityGroupId: !GetAtt SgCV.GroupId
+          Description: Ingesta de incidentes desde el CV
       Tags:
         - Key: Name
           Value: sg-backend
@@ -141,11 +171,24 @@ Resources:
         - Key: Name
           Value: sg-rds
 
+  # Regla aparte (no inline en SgCV) para evitar dependencia circular:
+  # SgBackend ya referencia SgCV.GroupId inline, asi que SgCV no puede
+  # referenciar SgBackend inline tambien.
+  SgCVAllowBackendWebhook:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !GetAtt SgCV.GroupId
+      IpProtocol: tcp
+      FromPort: !Ref CvWebhookPort
+      ToPort: !Ref CvWebhookPort
+      SourceSecurityGroupId: !GetAtt SgBackend.GroupId
+      Description: Webhook del CV (reglas EPP + config de camara, backend a CV)
+
   # ────────────────────────────────────────────────────────────
-  # IAM — lectura del bucket de assets (SQL/videos) + pull de ECR
+  # IAM — un rol por instancia, cada uno con lo minimo que usa
   # ────────────────────────────────────────────────────────────
 
-  AssetsReadRole:
+  BackendRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
@@ -161,49 +204,88 @@ Resources:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
-                Action:
-                  - s3:GetObject
-                  - s3:ListBucket
+                Action: [s3:GetObject, s3:ListBucket]
                 Resource:
                   - !Sub arn:aws:s3:::${AssetsBucketName}
                   - !Sub arn:aws:s3:::${AssetsBucketName}/*
+        - PolicyName: ReadEvidenceForPresign
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Las URLs prefirmadas que recibe Telegram se firman con este rol:
+              # solo funcionan si el rol puede leer el objeto.
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub arn:aws:s3:::${EvidenceBucketName}/*
+        - PolicyName: DiscoverCvInstance
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # wire-camera.sh busca la IP privada del CV por tags para guardarla
+              # en cameras.ip_address. DescribeInstances no admite permisos por recurso.
+              - Effect: Allow
+                Action: ec2:DescribeInstances
+                Resource: '*'
         - PolicyName: PullEcrImages
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              # GetAuthorizationToken es una accion a nivel de cuenta - ECR no
-              # soporta permisos a nivel de recurso para ella, Resource debe ser '*'.
               - Effect: Allow
                 Action: ecr:GetAuthorizationToken
                 Resource: '*'
               - Effect: Allow
-                Action:
-                  - ecr:BatchCheckLayerAvailability
-                  - ecr:GetDownloadUrlForLayer
-                  - ecr:BatchGetImage
-                Resource:
-                  - !Sub arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${EcrBackendRepoName}
-                  - !Sub arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${EcrCvRepoName}
+                Action: [ecr:BatchCheckLayerAvailability, ecr:GetDownloadUrlForLayer, ecr:BatchGetImage]
+                Resource: !Sub arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${EcrBackendRepoName}
 
-  AssetsInstanceProfile:
+  CvRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ReadAssetsBucket
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [s3:GetObject, s3:ListBucket]
+                Resource:
+                  - !Sub arn:aws:s3:::${AssetsBucketName}
+                  - !Sub arn:aws:s3:::${AssetsBucketName}/*
+        - PolicyName: WriteEvidence
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub arn:aws:s3:::${EvidenceBucketName}/*
+        - PolicyName: PullEcrImages
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: '*'
+              - Effect: Allow
+                Action: [ecr:BatchCheckLayerAvailability, ecr:GetDownloadUrlForLayer, ecr:BatchGetImage]
+                Resource: !Sub arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${EcrCvRepoName}
+
+  BackendInstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
       Roles:
-        - !Ref AssetsReadRole
+        - !Ref BackendRole
 
-  # Regla aparte (no inline en SgCV) para evitar dependencia circular:
-  # SgBackend ya referencia SgCV.GroupId inline (arriba), asi que SgCV no
-  # puede referenciar SgBackend inline tambien - se declara como recurso
-  # independiente, creado despues de que ambos grupos ya existen.
-  SgCVAllowBackendWebhook:
-    Type: AWS::EC2::SecurityGroupIngress
+  CvInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
     Properties:
-      GroupId: !GetAtt SgCV.GroupId
-      IpProtocol: tcp
-      FromPort: 8001
-      ToPort: 8001
-      SourceSecurityGroupId: !GetAtt SgBackend.GroupId
-      Description: Webhook de recarga de parametros (backend a CV, HU04)
+      Roles:
+        - !Ref CvRole
 
   # ────────────────────────────────────────────────────────────
   # RDS
@@ -243,7 +325,7 @@ Resources:
       SubnetId: !Ref SubnetId
       SecurityGroupIds:
         - !GetAtt SgBackend.GroupId
-      IamInstanceProfile: !Ref AssetsInstanceProfile
+      IamInstanceProfile: !Ref BackendInstanceProfile
       BlockDeviceMappings:
         - DeviceName: /dev/sda1
           Ebs:
@@ -305,11 +387,46 @@ Resources:
           SPRING_R2DBC_USERNAME=safevision
           SPRING_R2DBC_PASSWORD=${DbMasterPassword}
           ALERT_SERVICE_TOKEN=${AlertServiceToken}
+          JWT_SECRET=${JwtSecret}
           TELEGRAM_BOT_TOKEN=${TelegramBotToken}
           TELEGRAM_CHAT_ID=${TelegramChatId}
+          S3_BUCKET=${EvidenceBucketName}
+          AWS_REGION=${AWS::Region}
+          CV_WEBHOOK_PORT=${CvWebhookPort}
           SERVER_PORT=8080
+          TZ=America/Lima
           ENVEOF
           chmod 600 /etc/safevision/backend.env
+
+          # Enlace backend -> CV: el backend le avisa al CV (reglas EPP, config de
+          # camara) por HTTP a cameras.ip_address. La IP privada del CV no existe
+          # hasta que su instancia arranca, asi que se busca por tags y se guarda
+          # en la camara del seed. Tambien lo corre "./deploy.sh wire" como respaldo.
+          cat > /opt/safevision/wire-camera.sh <<WIREEOF
+          #!/bin/bash
+          set -euo pipefail
+          cv_ip=""
+          for intento in \$(seq 1 60); do
+            cv_ip=\$(aws ec2 describe-instances --region ${AWS::Region} \
+              --filters "Name=tag:aws:cloudformation:stack-name,Values=${AWS::StackName}" \
+                        "Name=tag:Name,Values=safevision-cv" \
+                        "Name=instance-state-name,Values=pending,running" \
+              --query 'Reservations[0].Instances[0].PrivateIpAddress' --output text)
+            if [ -n "\$cv_ip" ] && [ "\$cv_ip" != "None" ]; then break; fi
+            echo "Esperando la IP privada del CV (intento \$intento/60)..."
+            sleep 10
+          done
+          if [ -z "\$cv_ip" ] || [ "\$cv_ip" = "None" ]; then
+            echo "No se encontro la instancia del CV — correr ./deploy.sh wire mas tarde"
+            exit 1
+          fi
+          db_pass=\$(grep '^SPRING_R2DBC_PASSWORD=' /etc/safevision/backend.env | cut -d= -f2-)
+          PGPASSWORD="\$db_pass" psql "host=${RDSInstance.Endpoint.Address} port=5432 dbname=safevision user=safevision sslmode=require" \
+            -v ON_ERROR_STOP=1 \
+            -c "UPDATE cameras SET ip_address = '\$cv_ip', rtsp_url = 'rtsp://localhost:8554/obra1' WHERE code = '${CameraCode}';"
+          echo "Camara ${CameraCode} enlazada al CV en \$cv_ip:${CvWebhookPort}"
+          WIREEOF
+          chmod 700 /opt/safevision/wire-camera.sh
 
           cat > /etc/systemd/system/safevision-back.service <<UNITEOF
           [Unit]
@@ -333,6 +450,8 @@ Resources:
 
           systemctl daemon-reload
           systemctl enable --now safevision-back
+
+          /opt/safevision/wire-camera.sh || echo "wire-camera.sh fallo — correr ./deploy.sh wire"
           echo "=== SafeVision backend bootstrap terminado: $(date) ==="
 
   # ────────────────────────────────────────────────────────────
@@ -348,7 +467,7 @@ Resources:
       SubnetId: !Ref SubnetId
       SecurityGroupIds:
         - !GetAtt SgCV.GroupId
-      IamInstanceProfile: !Ref AssetsInstanceProfile
+      IamInstanceProfile: !Ref CvInstanceProfile
       BlockDeviceMappings:
         - DeviceName: /dev/sda1
           Ebs:
@@ -416,16 +535,20 @@ Resources:
                 mkdir -p /etc/safevision
                 cat > /etc/safevision/cv.env <<ENVEOF
                 VIDEO_SOURCE=rtsp://localhost:8554/obra1
-                ALERT_SERVICE_URL=http://${BackendInstance.PrivateIp}:8080/api/v1/incidents
+                BACKEND_URL=http://${BackendInstance.PrivateIp}:8080
                 ALERT_SERVICE_TOKEN=${AlertServiceToken}
-                PARAMETERS_URL=http://${BackendInstance.PrivateIp}:8080/api/v1/parameters
-                SITE_ID=1
-                SITE_NAME=Obra-Principal
-                CAMERA_ID=CAM-01
+                SITE_NAME=${SiteName}
+                CAMERA_ID=${CameraCode}
+                CV_WEBHOOK_PORT=${CvWebhookPort}
+                MODEL_PATH=models/yolov11s/exp3/weights/best_int8_openvino_model
+                CONFIDENCE_THRESHOLD=0.5
                 COOLDOWN_SECONDS=60
-                MODEL_PATH=models/yolov11s/exp2/weights/best_int8_openvino_model
+                S3_BUCKET=${EvidenceBucketName}
+                S3_PREFIX=incidents
+                AWS_REGION=${AWS::Region}
+                CLIP_ENABLED=true
                 DISPLAY_WINDOW=false
-                RELOAD_SERVER_PORT=8001
+                APP_ENV=prd
                 TZ=America/Lima
                 ENVEOF
                 chmod 600 /etc/safevision/cv.env
@@ -498,27 +621,32 @@ Resources:
 
 Outputs:
   BackendPublicIP:
-    Description: IP publica del backend (Swagger, GET /api/v1/incidents).
+    Description: IP publica del backend.
     Value: !Ref BackendEIP
+
+  SwaggerUrl:
+    Description: Swagger UI (login en /api/v1/auth/login con el usuario del seed).
+    Value: !Sub http://${BackendEIP}:8080/swagger-ui.html
 
   CVPublicIP:
     Description: IP publica de la EC2 de CV (SSH para correr simulate_camera.sh).
     Value: !Ref CVEIP
 
   BackendPrivateIP:
-    Description: IP privada del backend (para referencia/debug).
+    Description: IP privada del backend (BACKEND_URL del CV).
     Value: !GetAtt BackendInstance.PrivateIp
 
   CVPrivateIP:
-    Description: >
-      IP privada de la EC2 de CV — usada por deploy.sh para configurar
-      CV_RELOAD_URL en el backend despues de crear el stack (ver README,
-      seccion del webhook de recarga de parametros).
+    Description: IP privada del CV (queda en cameras.ip_address de la camara del seed).
     Value: !GetAtt CVInstance.PrivateIp
 
   RDSEndpoint:
     Description: Endpoint del RDS (sin acceso publico, solo referencia).
     Value: !GetAtt RDSInstance.Endpoint.Address
+
+  EvidenceBucket:
+    Description: Bucket de evidencia (foto + clip de cada incidente).
+    Value: !Ref EvidenceBucketName
 
   SSHBackendCommand:
     Value: !Sub ssh -i ${KeyPairName}.pem ubuntu@${BackendEIP}
