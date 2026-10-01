@@ -2,6 +2,7 @@
 
 > Archivo de contexto para Claude Code.
 > **Leer ANTES de cualquier intervención en el código.**
+> Equivalente a AGENTS.md — mantener ambos sincronizados.
 
 ---
 
