@@ -1,5 +1,10 @@
 name: CI
 
+# Homogeneo con safevision-front y safevision-computer-vision:
+# mismos triggers, mismo runner, mismos roles de job (guards / lint+format /
+# test / security / docker-build) y `guards` como unico lugar con las reglas
+# no negociables de AGENTS.md.
+#
 # develop / release / main. infra/ no dispara el pipeline
 # (despliegue CloudFormation de infra/ sigue manual con deploy.sh).
 on:
@@ -15,6 +20,7 @@ on:
       - 'infra/**'
       - 'docs/**'
       - '*.md'
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -24,9 +30,75 @@ permissions:
   contents: read
 
 jobs:
+  # ── Reglas no negociables de AGENTS.md (verificables en el PR) ─────────
+  guards:
+    name: guards
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Reglas del repo (AGENTS.md)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="origin/${{ github.base_ref }}"
+          else
+            BASE="HEAD~1"
+          fi
+          RANGE="$BASE...HEAD"
+          echo "Rango evaluado: $RANGE"
+
+          echo "== 1/4: sin firma de IA en los mensajes =="
+          if git log "$RANGE" --format=%B | grep -iE 'Co-authored-by.*(Codex|Claude)|Generated with (Codex|Claude Code)'; then
+            echo "::error::Mensajes con firma de IA (prohibido por AGENTS.md)."
+            exit 1
+          fi
+
+          echo "== 2/4: commits convencionales =="
+          FAILED=0
+          while IFS= read -r subject; do
+            [ -z "$subject" ] && continue
+            case "$subject" in
+              Merge*) continue ;;
+            esac
+            if ! echo "$subject" | grep -qE '^(feat|fix|docs|refactor|test|chore|exp|perf|ci)(\+(feat|fix|docs|refactor|test|chore|exp|perf|ci))*(\(.+\))?: .+'; then
+              echo "::error::Commit fuera de formato: $subject"
+              FAILED=1
+            fi
+          done < <(git log "$RANGE" --format=%s)
+          [ "$FAILED" = "1" ] && exit 1
+
+          echo "== 3/4: sin .env ni .pem en el PR =="
+          if git diff --name-only --diff-filter=ACMRT "$RANGE" | grep -xE '\.env'; then
+            echo "::error::El PR incluye .env (prohibido: secretos solo en local)."
+            exit 1
+          fi
+          if git diff --name-only --diff-filter=ACMRT "$RANGE" | grep -E '\.pem$'; then
+            echo "::error::El PR incluye un .pem (prohibido)."
+            exit 1
+          fi
+
+          echo "== 4/4: espejo AGENTS.md <-> CLAUDE.md =="
+          CHANGED=$(git diff --name-only "$RANGE")
+          echo "$CHANGED" | grep -qx 'AGENTS.md' && HAS_AGENTS=1 || HAS_AGENTS=0
+          echo "$CHANGED" | grep -qx 'CLAUDE.md' && HAS_CLAUDE=1 || HAS_CLAUDE=0
+          if [ "$HAS_AGENTS" != "$HAS_CLAUDE" ]; then
+            echo "::error::AGENTS.md y CLAUDE.md deben actualizarse juntos (archivos espejo)."
+            exit 1
+          fi
+
+          echo "Guards OK."
+
+  # ── Titulo semantico del PR ────────────────────────────────────────────
   pr-title:
+    name: pr-title
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       - uses: amannn/action-semantic-pull-request@v5
         env:
@@ -41,30 +113,11 @@ jobs:
             refactor
             test
 
-  docs-mirror:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: AGENTS.md <-> CLAUDE.md espejo
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            BASE="origin/${{ github.base_ref }}"
-            RANGE="$BASE...HEAD"
-          else
-            RANGE="HEAD~1...HEAD"
-          fi
-          CHANGED=$(git diff --name-only "$RANGE" || true)
-          echo "$CHANGED" | grep -qx 'AGENTS.md' && HAS_AGENTS=1 || HAS_AGENTS=0
-          echo "$CHANGED" | grep -qx 'CLAUDE.md' && HAS_CLAUDE=1 || HAS_CLAUDE=0
-          if [ "$HAS_AGENTS" != "$HAS_CLAUDE" ]; then
-            echo "::error::AGENTS.md y CLAUDE.md deben actualizarse juntos (archivos espejo)."
-            exit 1
-          fi
-
+  # ── Build + lint + format + tests + cobertura ──────────────────────────
   build-test:
-    runs-on: ubuntu-latest
+    name: build-test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -99,8 +152,11 @@ jobs:
             target/surefire-reports/
             target/site/jacoco/
 
+  # ── Escaneo de secretos ────────────────────────────────────────────────
   secrets-scan:
-    runs-on: ubuntu-latest
+    name: secrets-scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: read
       pull-requests: write # gitleaks comenta el hallazgo en el PR (gratis)
@@ -114,12 +170,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # ── Imagen Docker (ultimo: solo si lo anterior paso) ───────────────────
   docker-build:
+    name: docker-build
     # Ultimo en correr: solo si build-test y secrets-scan pasaron.
     # (pr-title no se incluye porque en push se salta y arrastraria este job con el.)
     # No quemar minutos en drafts. Solo valida que la imagen construye, sin push.
     if: github.event.pull_request.draft == false
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     needs: [build-test, secrets-scan]
     steps:
       - uses: actions/checkout@v4
