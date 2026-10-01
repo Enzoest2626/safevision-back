@@ -1,0 +1,4 @@
+# CODEOWNERS — dueno de todo el repo (mismo criterio en los 3 modulos).
+# El review obligatorio lo exige el ruleset (required_approving_review_count),
+# no este archivo (require_code_owner_review = false).
+* @Enzoest2626

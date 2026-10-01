@@ -10,6 +10,15 @@ target/
 *.project
 *.settings/
 
+# OpenCode — agentes locales, no se suben al repo
+.opencode/
+
+# Contexto de agentes de IA — versionado (homogeneo con front y CV), para que
+# el guard de espejo AGENTS.md <-> CLAUDE.md del CI tenga algo que comparar.
+# Nota: el fix de .gitleaks.toml sigue haciendo falta porque el hallazgo
+# original vive en commits ya mergeados (3049959), que gitleaks escanea por
+# historial.
+
 # Spring Boot
 application-prd.yml
 
@@ -17,6 +26,7 @@ application-prd.yml
 .env
 *.env
 *.env.local
+*.pem
 
 # OS
 .DS_Store

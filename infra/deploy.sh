@@ -2,10 +2,10 @@
 # SafeVision — un solo script para todo el ciclo de vida del stack de demo.
 #
 # Uso:
-#   ./deploy.sh up       # build+push imagenes a ECR + sube SQL/videos a S3 + crea el stack + conecta el webhook CV->backend + muestra los resultados
+#   ./deploy.sh up       # build+push imagenes a ECR + sube SQL/videos a S3 + asegura el bucket de evidencia + crea el stack + espera la API + muestra los resultados
 #   ./deploy.sh build    # solo build+push de las imagenes Docker a ECR (sin tocar el stack)
-#   ./deploy.sh upload   # solo re-sube SQL/videos a S3 (sin tocar el stack)
-#   ./deploy.sh wire     # solo re-conecta el webhook (por si el paso automatico de 'up' fallo)
+#   ./deploy.sh upload   # solo re-sube SQL/videos a S3 y asegura el bucket de evidencia (sin tocar el stack)
+#   ./deploy.sh wire     # re-enlaza la camara del seed con la IP del CV (lo hace solo el bootstrap del backend; esto es el respaldo manual por SSH)
 #   ./deploy.sh status   # muestra el estado actual del stack + sus Outputs
 #   ./deploy.sh down     # borra el stack completo
 #
@@ -47,6 +47,14 @@ for var in AWS_REGION STACK_NAME ASSETS_BUCKET CV_REPO_PATH KEY_PAIR_NAME PEM_PA
     exit 1
   fi
 done
+
+# Opcionales con default: bucket de evidencia (foto + clip de incidentes) y
+# el secreto de los JWT. Si JWT_SECRET no esta en deploy.env se genera uno por
+# stack — los tokens emitidos dejan de valer al recrear el stack, nada mas.
+EVIDENCE_BUCKET="${EVIDENCE_BUCKET:-${ASSETS_BUCKET}-evidence}"
+if [ -z "${JWT_SECRET:-}" ]; then
+  JWT_SECRET="$(openssl rand -hex 32)"
+fi
 
 # ────────────────────────────────────────────────────────────
 # build — build + push de las imagenes Docker a ECR
@@ -101,9 +109,27 @@ do_upload() {
     aws s3 cp "$cv_repo/tests/fixtures/video/OBRA_REAL_${n}.mp4" "s3://$ASSETS_BUCKET/videos/OBRA_REAL_${n}.mp4" --profile "$AWS_PROFILE"
   done
 
+  do_ensure_evidence_bucket
+
   echo
   echo "=== Assets subidos. Contenido de s3://$ASSETS_BUCKET: ==="
   aws s3 ls "s3://$ASSETS_BUCKET" --recursive --human-readable --summarize --region "$AWS_REGION" --profile "$AWS_PROFILE"
+}
+
+# ────────────────────────────────────────────────────────────
+# evidence-bucket — bucket persistente de evidencia (lo escribe el CV, lo lee
+# el backend para las URLs prefirmadas). Privado, con expiracion a 60 dias.
+# ────────────────────────────────────────────────────────────
+do_ensure_evidence_bucket() {
+  if ! aws s3api head-bucket --bucket "$EVIDENCE_BUCKET" --profile "$AWS_PROFILE" --region "$AWS_REGION" 2>/dev/null; then
+    echo "Bucket de evidencia s3://$EVIDENCE_BUCKET no existe, creandolo..."
+    aws s3 mb "s3://$EVIDENCE_BUCKET" --region "$AWS_REGION" --profile "$AWS_PROFILE"
+  fi
+  aws s3api put-public-access-block --bucket "$EVIDENCE_BUCKET" --profile "$AWS_PROFILE" --region "$AWS_REGION" \
+    --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+  aws s3api put-bucket-lifecycle-configuration --bucket "$EVIDENCE_BUCKET" --profile "$AWS_PROFILE" --region "$AWS_REGION" \
+    --lifecycle-configuration '{"Rules":[{"ID":"expira-evidencia-60-dias","Status":"Enabled","Filter":{"Prefix":""},"Expiration":{"Days":60}}]}'
+  echo "Bucket de evidencia listo: s3://$EVIDENCE_BUCKET (privado, expira a los 60 dias)"
 }
 
 # ────────────────────────────────────────────────────────────
@@ -122,10 +148,12 @@ do_create_stack() {
       ParameterKey=KeyPairName,ParameterValue="$KEY_PAIR_NAME" \
       ParameterKey=MyIpCidr,ParameterValue="$MY_IP_CIDR" \
       ParameterKey=AssetsBucketName,ParameterValue="$ASSETS_BUCKET" \
+      ParameterKey=EvidenceBucketName,ParameterValue="$EVIDENCE_BUCKET" \
       ParameterKey=EcrBackendRepoName,ParameterValue="$ECR_BACKEND_REPO" \
       ParameterKey=EcrCvRepoName,ParameterValue="$ECR_CV_REPO" \
       ParameterKey=DbMasterPassword,ParameterValue="$DB_MASTER_PASSWORD" \
       ParameterKey=AlertServiceToken,ParameterValue="$ALERT_SERVICE_TOKEN" \
+      ParameterKey=JwtSecret,ParameterValue="$JWT_SECRET" \
       ParameterKey=TelegramBotToken,ParameterValue="$TELEGRAM_BOT_TOKEN" \
       ParameterKey=TelegramChatId,ParameterValue="$TELEGRAM_CHAT_ID" --profile "$AWS_PROFILE"
 
@@ -135,44 +163,44 @@ do_create_stack() {
 }
 
 # ────────────────────────────────────────────────────────────
-# wire-cv-callback — le dice al backend donde esta el CV, despues de
-# create-stack (no se puede saber antes: la IP privada del CV no existe
-# hasta que esa instancia arranca de verdad — ver infra/README.md).
+# wait-ready — espera a que la API del backend responda (desde tu IP, que el
+# security group ya permite en :8080). El enlace backend -> CV lo hace solo el
+# bootstrap del backend (/opt/safevision/wire-camera.sh), sin SSH.
 # ────────────────────────────────────────────────────────────
-do_wire_cv_callback() {
-  local backend_ip cv_private_ip
-
+do_wait_ready() {
+  local backend_ip intentos=0
   backend_ip=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --profile "$AWS_PROFILE" --region "$AWS_REGION" \
     --query 'Stacks[0].Outputs[?OutputKey==`BackendPublicIP`].OutputValue' --output text)
-  cv_private_ip=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --profile "$AWS_PROFILE" --region "$AWS_REGION" \
-    --query 'Stacks[0].Outputs[?OutputKey==`CVPrivateIP`].OutputValue' --output text)
-
-  if [ -z "$backend_ip" ] || [ -z "$cv_private_ip" ]; then
-    echo "No se pudieron leer los Outputs del stack — omito el wiring del webhook."
-    return 1
-  fi
-
-  local ssh_opts=(-i "$PEM_PATH" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10)
-
-  echo "--- Esperando a que el backend termine su bootstrap (systemd activo, hasta ~20 min) ---"
-  local intentos=0
-  until ssh "${ssh_opts[@]}" "ubuntu@$backend_ip" "systemctl is-active --quiet safevision-back" 2>/dev/null; do
+  echo "--- Esperando a que la API responda en http://$backend_ip:8080 (hasta ~20 min) ---"
+  # spring.webflux.base-path=/api/v1 se aplica a todo, incluido springdoc — sin
+  # el prefijo esta ruta da 404 aunque la API ya este arriba.
+  until curl -s -o /dev/null -w "%{http_code}" "http://$backend_ip:8080/api/v1/v3/api-docs" 2>/dev/null | grep -qE "^(200|401)$"; do
     intentos=$((intentos + 1))
     if [ "$intentos" -gt 120 ]; then
-      echo "El backend no terminó de arrancar tras ~20 min — revisá /var/log/safevision-userdata.log a mano"
-      echo "(ssh -i $PEM_PATH ubuntu@$backend_ip) y despues corré: ./deploy.sh wire"
+      echo "La API no respondio tras ~20 min — revisar /var/log/safevision-userdata.log"
+      echo "(ssh -i $PEM_PATH ubuntu@$backend_ip)"
       return 1
     fi
     if [ $((intentos % 6)) -eq 0 ]; then
-      echo "  ...siguen intentando conectar ($((intentos * 10 / 60)) min transcurridos)"
+      echo "  ...sigue arrancando ($((intentos * 10 / 60)) min transcurridos)"
     fi
     sleep 10
   done
+  echo "API arriba: http://$backend_ip:8080/swagger-ui.html"
+}
 
-  echo "--- Configurando CV_RELOAD_URL=http://$cv_private_ip:8001/reload-params en el backend ---"
-  ssh "${ssh_opts[@]}" "ubuntu@$backend_ip" \
-    "echo 'CV_RELOAD_URL=http://$cv_private_ip:8001/reload-params' | sudo tee -a /etc/safevision/backend.env >/dev/null && sudo systemctl restart safevision-back"
-  echo "Listo — el backend ahora le avisa al CV cuando cambian los parámetros EPP."
+# ────────────────────────────────────────────────────────────
+# wire — respaldo manual: vuelve a correr en el backend el script que guarda
+# la IP privada del CV en cameras.ip_address (la usan HttpRulesPublisher /
+# HttpCameraConfigPublisher para avisarle al CV). Solo hace falta si el
+# bootstrap no lo logro (ver /var/log/safevision-userdata.log del backend).
+# ────────────────────────────────────────────────────────────
+do_wire() {
+  local backend_ip
+  backend_ip=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --profile "$AWS_PROFILE" --region "$AWS_REGION" \
+    --query 'Stacks[0].Outputs[?OutputKey==`BackendPublicIP`].OutputValue' --output text)
+  ssh -i "$PEM_PATH" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "ubuntu@$backend_ip" \
+    "sudo /opt/safevision/wire-camera.sh"
 }
 
 # ────────────────────────────────────────────────────────────
@@ -200,7 +228,7 @@ do_down() {
   aws cloudformation delete-stack --stack-name "$STACK_NAME" --profile "$AWS_PROFILE" --region "$AWS_REGION"
   echo "--- Esperando a que termine de borrarse ---"
   aws cloudformation wait stack-delete-complete --stack-name "$STACK_NAME" --profile "$AWS_PROFILE" --region "$AWS_REGION"
-  echo "Stack borrado. (El bucket S3 de assets no se toca — queda listo para el proximo create-stack.)"
+  echo "Stack borrado. (Los buckets S3 de assets y evidencia y los repos ECR no se tocan — quedan listos para el proximo up.)"
 }
 
 # ────────────────────────────────────────────────────────────
@@ -210,7 +238,7 @@ main() {
       do_build_and_push
       do_upload
       do_create_stack
-      do_wire_cv_callback
+      do_wait_ready || true
       do_status
       ;;
     build)
@@ -220,7 +248,7 @@ main() {
       do_upload
       ;;
     wire)
-      do_wire_cv_callback
+      do_wire
       ;;
     status)
       do_status

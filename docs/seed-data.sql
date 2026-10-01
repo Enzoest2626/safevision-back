@@ -14,8 +14,7 @@ INSERT INTO user_roles (code, name) VALUES
 ON CONFLICT (code) DO NOTHING;
 
 INSERT INTO notification_channels (code, name) VALUES
-    ('TELEGRAM', 'Telegram'),
-    ('HIKVISION', 'Sirena Hikvision')
+    ('TELEGRAM', 'Telegram')
 ON CONFLICT (code) DO NOTHING;
 
 INSERT INTO notification_statuses (code, name) VALUES
@@ -31,18 +30,35 @@ INSERT INTO epp_parameters (code, name) VALUES
 ON CONFLICT (code) DO NOTHING;
 
 -- ────────────────────────────────────────────────────────────
--- OBRA DEMO
--- Nombre/codigo deben coincidir con SITE_NAME/CAMERA_ID/SITE_ID del
--- .env del modulo CV (ver .env.example: SITE_NAME=Obra-Principal,
--- CAMERA_ID=CAM-01, SITE_ID=1 — el id=1 asume BD vacia).
+-- USUARIO ADMIN (bootstrap)
+-- POST /api/v1/users ahora exige JWT, y el JWT solo se obtiene logueado
+-- con un usuario que ya exista — sin esta fila nadie puede entrar nunca.
+-- Password: SafeVision2026! (hash BCrypt generado con el mismo
+-- BCryptPasswordEncoder de la app — cambiar apenas se tenga un flujo
+-- real de gestión de usuarios, esto es solo para arrancar la demo).
 -- ────────────────────────────────────────────────────────────
 
-INSERT INTO sites (name, location) VALUES
-    ('Obra-Principal', 'Demo — sustentacion en vivo')
+INSERT INTO users (username, email, password_hash, role_id, phone)
+SELECT 'admin', 'admin@safevision.com',
+       '$2a$10$sIeD1mqXoTGaAe7iYFpL3ey7M2wk8JW/m1fBU25misuVT/CuGY3lK',
+       id, NULL
+FROM user_roles WHERE code = 'ADMIN'
+ON CONFLICT (username) DO NOTHING;
+
+-- ────────────────────────────────────────────────────────────
+-- OBRA DEMO
+-- name/code deben coincidir con SITE_NAME/CAMERA_ID del .env del modulo CV
+-- (ver .env.example: SITE_NAME=Obra-Principal, CAMERA_ID=CAM-01) — el CV
+-- los manda en cada evento HTTP para que el backend resuelva a que
+-- obra/camara corresponde.
+-- ────────────────────────────────────────────────────────────
+
+INSERT INTO sites (code, name, location) VALUES
+    ('OBRA-PRINCIPAL', 'Obra-Principal', 'Demo — sustentacion en vivo')
 ON CONFLICT (name) DO NOTHING;
 
-INSERT INTO zones (site_id, name)
-SELECT id, 'Zona Principal' FROM sites WHERE name = 'Obra-Principal'
+INSERT INTO zones (site_id, code, name)
+SELECT id, 'ZONA-PRINCIPAL', 'Zona Principal' FROM sites WHERE name = 'Obra-Principal'
 ON CONFLICT (site_id, name) DO NOTHING;
 
 INSERT INTO cameras (site_id, zone_id, code, name)

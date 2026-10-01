@@ -1,0 +1,42 @@
+# SafeVision Backend — sin dependencias más allá del propio JAR: la
+# comunicación con el módulo CV es HTTP directo (ver CLAUDE.md), no hay
+# broker que levantar junto al backend. Postgres SI se asume externo — en
+# AWS es RDS, un servicio manejado aparte — así que acá apunta afuera vía
+# host.docker.internal (tu máquina, o cualquier otra instancia a la que
+# apuntes con las variables de entorno de abajo).
+#
+# "host.docker.internal" apunta a tu máquina (donde probablemente corra
+# Postgres si no usás docker-compose.full.yml) — "localhost" ahí adentro
+# del contenedor apuntaría al propio contenedor, no a tu máquina.
+#
+# Para el flujo completo (Postgres + backend + frontend + CV + simulador
+# de cámara RTSP, todo en un solo comando) usar en cambio:
+#   docker compose -f docker-compose.full.yml up --build
+#
+# Uso (solo backend):
+#   cp .env.example .env
+#   docker compose up --build
+
+services:
+
+  backend:
+    build:
+      context: .
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-dev}
+      SPRING_PROFILES_ACTIVE: ${APP_ENV:-dev}
+      SPRING_R2DBC_URL: ${SPRING_R2DBC_URL:-r2dbc:postgresql://host.docker.internal:5432/safevision}
+      SPRING_R2DBC_USERNAME: ${SPRING_R2DBC_USERNAME:-safevision}
+      SPRING_R2DBC_PASSWORD: ${SPRING_R2DBC_PASSWORD:-safevision}
+      ALERT_SERVICE_TOKEN: ${ALERT_SERVICE_TOKEN:-dev-token}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      TELEGRAM_LINKING_POLL_INTERVAL_MS: ${TELEGRAM_LINKING_POLL_INTERVAL_MS:-900000}
+      CV_WEBHOOK_PORT: ${CV_WEBHOOK_PORT:-5001}
+      S3_BUCKET: ${S3_BUCKET:-}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+    ports:
+      - "8080:8080"
