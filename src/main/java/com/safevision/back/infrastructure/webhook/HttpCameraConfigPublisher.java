@@ -15,13 +15,14 @@ import java.util.Map;
 
 /**
  * Notifica (best-effort, vía HTTP) la configuración vigente de una cámara al
- * módulo CV correspondiente — reemplaza el retained MQTT de antes. El CV
- * expone un pequeño servidor HTTP propio (webhook) en {@code camera.ipAddress}
- * más un puerto fijo; no hay broker de por medio.
+ * módulo CV correspondiente — antes se usaba mensajería con broker, retirada
+ * en 2026-08; hoy HTTP directo. El CV expone un pequeño servidor HTTP propio
+ * (webhook) en {@code camera.ipAddress} más un puerto fijo; no hay broker
+ * de por medio.
  *
  * Fire-and-forget: un fallo (CV apagado, red caída) se loguea y no bloquea ni
  * propaga error al flujo que disparó la actualización — mismo criterio
- * best-effort que tenía el publisher MQTT.
+ * best-effort que tenía ese mecanismo anterior.
  */
 @Service
 public class HttpCameraConfigPublisher implements CameraConfigPublisherPort {

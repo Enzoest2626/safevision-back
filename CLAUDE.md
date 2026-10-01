@@ -311,9 +311,10 @@ texto armado por `DailyReportMessage`); día vacío → mensaje explícito de
 incidente (contactos de la obra con telegram, fallback al chat global) y cada
 envío se registra en `notifications` como SENT/FAILED (una fila por incidente
 cubierto — día vacío no registra porque `notifications.incident_id` es NOT
-NULL), sin propagar el error al scheduler. Config en `application-prd.yml`
-(`REPORTS_DAILY_ENABLED` default true) y `application-dev.yml` (default
-false); en tests la propiedad no existe y el bean no se crea
+NULL), sin propagar el error al scheduler. Nace APAGADO en todos los perfiles
+(`REPORTS_DAILY_ENABLED` default false en `application-prd.yml` y en
+`application-dev.yml`); se enciende solo con `REPORTS_DAILY_ENABLED=true`.
+En tests la propiedad no existe y el bean no se crea
 (`matchIfMissing=false`).
 
 ### Autenticación
@@ -724,7 +725,8 @@ TELEGRAM_CHAT_ID=
 TELEGRAM_LINKING_POLL_INTERVAL_MS=900000   # Intervalo del polling de vinculación (TelegramLinkingPoller), default 15 min
 
 # Reporte diario automático (HU12 — ReportSchedulerService, zona America/Lima)
-REPORTS_DAILY_ENABLED=true    # En dev el default es false; en tests la propiedad no existe (scheduler apagado)
+# Nace APAGADO por defecto; se enciende con REPORTS_DAILY_ENABLED=true
+REPORTS_DAILY_ENABLED=false    # En tests la propiedad no existe (scheduler apagado)
 REPORTS_DAILY_CRON=0 55 23 * * *   # default 23:55
 
 # Seguridad
@@ -927,4 +929,4 @@ feat(setup): inicializa proyecto con dependencias y configuración base
 - [x] Obras/zonas/cámaras con `code` inmutable (autogenerado o validado contra duplicados) — identificador de negocio estable que el CV manda en cada evento
 - [x] `infra/cloudformation/safevision-stack-mqtt.yaml` (CloudFormation viejo, seguía aprovisionando un `mosquitto` que ya no hacía falta) eliminado — `infra/deploy.sh`/`infra/README.md` ya apuntaban únicamente a `safevision-stack.yaml` (el stack HTTP sin broker), no hacía falta tocarlos
 - [x] Cooldown EPP por defecto 30 s (HU07) — `SiteService`/`EppParameterService` (`DEFAULT_COOLDOWN_SECONDS`), `docs/init-schema.sql` (`DEFAULT 30`) y `COOLDOWN_SECONDS=30` del CV en `infra/cloudformation/safevision-stack.yaml`
-- [x] Reporte diario automático por Telegram (HU12, CA1/CA2) — `ReportSchedulerService` + `DailyReportMessage` (texto en español: total, agregado por EPP, línea por evento; día vacío → "sin incumplimientos") + `NotificationChannelPort.sendTextMessage` (Bot API `sendMessage`); config `app.reports.daily-enabled/daily-cron` (prd true, dev false, tests ausente)
+- [x] Reporte diario automático por Telegram (HU12, CA1/CA2) — `ReportSchedulerService` + `DailyReportMessage` (texto en español: total, agregado por EPP, línea por evento; día vacío → "sin incumplimientos") + `NotificationChannelPort.sendTextMessage` (Bot API `sendMessage`); config `app.reports.daily-enabled/daily-cron` (prd false, dev false, tests ausente; se enciende con `REPORTS_DAILY_ENABLED=true`)

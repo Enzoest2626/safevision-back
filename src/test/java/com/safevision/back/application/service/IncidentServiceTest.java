@@ -155,7 +155,7 @@ class IncidentServiceTest {
         verify(incidentRepo, never()).save(any());
     }
 
-    // ── registerFromCv (flujo MQTT/CV) ────────────────────────────────────────
+    // ── registerFromCv (flujo HTTP/CV) ────────────────────────────────────────
 
     private CvIncidentMessage cvMessageFor(String siteName) {
         return new CvIncidentMessage("cv-uuid-1", 3, List.of("helmet", "vest"),
@@ -166,7 +166,7 @@ class IncidentServiceTest {
     @Test
     @DisplayName("registerFromCv: mensaje valido -> persiste incidente con external_id y evidencia con storageKey")
     void registerFromCv_valido_persisteConExternalIdYStorageKey() {
-        StepVerifier.create(service.registerFromCv(cvMessageFor("Main-Site"), "trace-mqtt"))
+        StepVerifier.create(service.registerFromCv(cvMessageFor("Main-Site"), "trace-http"))
                 .assertNext(response -> assertThat(response.id()).isEqualTo(100L))
                 .verifyComplete();
 
@@ -180,7 +180,7 @@ class IncidentServiceTest {
         assertThat(evidenceCaptor.getValue().storageKey()).isEqualTo("incidents/2026-08-10/cv-uuid-1/photo.jpg");
         assertThat(evidenceCaptor.getValue().frameB64()).isNull();
 
-        verify(notificationService).notify(any(Incident.class), eq(worker), eq(camera), eq(site), any(Evidence.class), eq("trace-mqtt"));
+        verify(notificationService).notify(any(Incident.class), eq(worker), eq(camera), eq(site), any(Evidence.class), eq("trace-http"));
     }
 
     @Test
@@ -188,7 +188,7 @@ class IncidentServiceTest {
     void registerFromCv_workerDesconocido_lanzaBadRequest() {
         when(workerRepo.findByCode(3)).thenReturn(Mono.empty());
 
-        StepVerifier.create(service.registerFromCv(cvMessageFor("Main-Site"), "trace-mqtt"))
+        StepVerifier.create(service.registerFromCv(cvMessageFor("Main-Site"), "trace-http"))
                 .expectErrorMatches(ex -> ex instanceof ResponseStatusException rse
                         && rse.getStatusCode() == HttpStatus.BAD_REQUEST)
                 .verify();
@@ -201,7 +201,7 @@ class IncidentServiceTest {
     void registerFromCv_obraDesconocida_lanzaBadRequest() {
         when(siteRepo.findByName("Obra-Fantasma")).thenReturn(Mono.empty());
 
-        StepVerifier.create(service.registerFromCv(cvMessageFor("Obra-Fantasma"), "trace-mqtt"))
+        StepVerifier.create(service.registerFromCv(cvMessageFor("Obra-Fantasma"), "trace-http"))
                 .expectErrorMatches(ex -> ex instanceof ResponseStatusException rse
                         && rse.getStatusCode() == HttpStatus.BAD_REQUEST)
                 .verify();
@@ -209,7 +209,7 @@ class IncidentServiceTest {
         verify(incidentRepo, never()).save(any());
     }
 
-    // ── registerClipReady (flujo MQTT/CV, clip de video) ──────────────────────
+    // ── registerClipReady (flujo HTTP/CV, clip de video) ──────────────────────
 
     @Test
     @DisplayName("registerClipReady: incidente existente -> guarda evidencia tipo VIDEO, no notifica")

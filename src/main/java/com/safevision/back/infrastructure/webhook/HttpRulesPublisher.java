@@ -17,9 +17,10 @@ import java.util.Map;
 
 /**
  * Notifica (best-effort, vía HTTP) las reglas EPP vigentes de una obra a
- * cada cámara activa de esa obra — reemplaza el retained MQTT de antes. Una
- * obra puede tener varias cámaras (varias instancias del CV), así que se
- * hace fan-out: un POST por cámara a su webhook.
+ * cada cámara activa de esa obra — antes se usaba mensajería con broker,
+ * retirada en 2026-08; hoy HTTP directo. Una obra puede tener varias cámaras
+ * (varias instancias del CV), así que se hace fan-out: un POST por cámara
+ * a su webhook.
  */
 @Service
 public class HttpRulesPublisher implements RulesPublisherPort {
