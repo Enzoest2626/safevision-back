@@ -62,17 +62,22 @@ jobs:
           fi
 
           echo "== 2/4: commits convencionales =="
+          # Commits previos a la adopcion de este guard, ya pusheados —
+          # AGENTS.md prohibe reescribir historial, asi que se omiten.
+          # (8b9bf44: "checkpoint: backend en HTTP puro ...", 2026-08-25)
+          LEGACY="8b9bf44"
           FAILED=0
-          while IFS= read -r subject; do
+          while IFS=$'\t' read -r sha subject; do
             [ -z "$subject" ] && continue
             case "$subject" in
               Merge*) continue ;;
             esac
-            if ! echo "$subject" | grep -qE '^(feat|fix|docs|refactor|test|chore|exp|perf|ci)(\+(feat|fix|docs|refactor|test|chore|exp|perf|ci))*(\(.+\))?: .+'; then
+            case " $LEGACY " in *" $sha "*) echo "omitido (legacy): $sha $subject"; continue ;; esac
+            if ! echo "$subject" | grep -qE '^(feat|fix|docs|refactor|test|chore|exp|perf|ci|style)(\+(feat|fix|docs|refactor|test|chore|exp|perf|ci|style))*(\(.+\))?: .+'; then
               echo "::error::Commit fuera de formato: $subject"
               FAILED=1
             fi
-          done < <(git log "$RANGE" --format=%s)
+          done < <(git log "$RANGE" --format="%h%x09%s")
           [ "$FAILED" = "1" ] && exit 1
 
           echo "== 3/4: sin .env ni .pem en el PR =="
