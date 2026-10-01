@@ -15,8 +15,8 @@ import java.time.LocalDateTime;
 @Service
 public class SiteService {
 
-    /** Mismo default que {@code ComplianceTracker.DEFAULT_COOLDOWN_SECONDS} en el CV. */
-    private static final int DEFAULT_COOLDOWN_SECONDS = 60;
+    /** Default de 30 s, igual que {@code ComplianceTracker.DEFAULT_COOLDOWN_SECONDS} en el CV. */
+    private static final int DEFAULT_COOLDOWN_SECONDS = 30;
 
     private final SiteRepositoryPort siteRepository;
 

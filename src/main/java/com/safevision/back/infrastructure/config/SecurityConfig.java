@@ -62,7 +62,7 @@ public class SecurityConfig {
     /**
      * Valida el Bearer token estático para los endpoints de ingesta de
      * incidentes. Aplica a POST /api/v1/incidents (legacy) y a
-     * POST /api/v1/cv/** (incidentes/clips por HTTP, reemplaza MQTT) —
+     * POST /api/v1/cv/** (incidentes/clips por HTTP directo, sin broker desde 2026-08) —
      * llamados exclusivamente por el módulo CV.
      */
     private WebFilter alertTokenFilter() {

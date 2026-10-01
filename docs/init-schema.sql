@@ -41,7 +41,7 @@ CREATE TABLE sites (
     code             VARCHAR(50)  NOT NULL UNIQUE,
     name             VARCHAR(100) NOT NULL UNIQUE,
     location         VARCHAR(200),
-    cooldown_seconds INTEGER      NOT NULL DEFAULT 60,
+    cooldown_seconds INTEGER      NOT NULL DEFAULT 30,
     active           BOOLEAN      NOT NULL DEFAULT TRUE,
     created_at       TIMESTAMP    NOT NULL DEFAULT NOW(),
     created_by       VARCHAR(100),

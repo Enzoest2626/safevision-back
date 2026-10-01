@@ -1,24 +1,32 @@
 package com.safevision.back.application.service;
 
 import com.safevision.back.application.dto.report.CategoryCount;
+import com.safevision.back.application.dto.report.CriticalDetail;
 import com.safevision.back.application.dto.report.DailyCount;
+import com.safevision.back.application.dto.report.HourlyCount;
 import com.safevision.back.application.dto.report.NotificationHealth;
 import com.safevision.back.application.dto.report.ReportResult;
-import com.safevision.back.application.dto.report.ReportSummary;
+import com.safevision.back.application.dto.report.ReportShift;
+import com.safevision.back.application.dto.report.WeekdayCount;
 import com.safevision.back.application.dto.report.WorkerCount;
 import com.safevision.back.application.dto.report.ZoneCount;
+import com.safevision.back.application.dto.report.ZoneHourCount;
 import com.safevision.back.application.ports.out.ReportRepositoryPort;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Mono;
-import reactor.util.function.Tuple2;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
+import java.util.Optional;
+
+import static com.safevision.back.application.service.ReportSupport.buildSummary;
+import static com.safevision.back.application.service.ReportSupport.variationPct;
+import static com.safevision.back.application.service.ReportSupport.zeroFillDays;
+import static com.safevision.back.application.service.ReportSupport.zeroFillHours;
+import static com.safevision.back.application.service.ReportSupport.zeroFillWeekdays;
 
 /**
  * Orquesta los reportes: dispara las agregaciones de {@link ReportRepositoryPort}
@@ -40,7 +48,13 @@ public class ReportService {
         this.reportRepo = reportRepo;
     }
 
-    public Mono<ReportResult> buildReport(Long siteId, LocalDateTime from, LocalDateTime to) {
+    public Mono<ReportResult> buildReport(Long siteId, LocalDateTime from, LocalDateTime to, String shiftRaw) {
+        ReportShift shift;
+        try {
+            shift = ReportShift.parse(shiftRaw);
+        } catch (ResponseStatusException ex) {
+            return Mono.error(ex);
+        }
         LocalDateTime effectiveTo = to != null ? to : LocalDateTime.now();
         LocalDateTime effectiveFrom = from != null ? from : effectiveTo.minusDays(DEFAULT_PERIOD_DAYS);
 
@@ -50,72 +64,57 @@ public class ReportService {
         LocalDate rangeStart = effectiveFrom.toLocalDate();
         LocalDate rangeEnd = effectiveTo.toLocalDate();
 
-        Mono<RawAggregates> aggregates = Mono.zip(
-                reportRepo.countIncidents(siteId, effectiveFrom, effectiveTo),
-                reportRepo.countIncidents(siteId, previousFrom, previousTo),
-                reportRepo.countByEppType(siteId, effectiveFrom, effectiveTo).collectList(),
-                reportRepo.countBySite(siteId, effectiveFrom, effectiveTo).collectList(),
-                reportRepo.countByDay(siteId, effectiveFrom, effectiveTo).collectList(),
-                reportRepo.countByZone(siteId, effectiveFrom, effectiveTo).collectList())
-                .map(t -> new RawAggregates(t.getT1(), t.getT2(), t.getT3(), t.getT4(),
-                        zeroFillDays(t.getT5(), rangeStart, rangeEnd), t.getT6()));
+        Mono<MainAggregates> main = Mono.zip(
+                reportRepo.countIncidents(siteId, effectiveFrom, effectiveTo, shift),
+                reportRepo.countIncidents(siteId, previousFrom, previousTo, shift),
+                reportRepo.countByEppType(siteId, effectiveFrom, effectiveTo, shift).collectList(),
+                reportRepo.countBySite(siteId, effectiveFrom, effectiveTo, shift).collectList(),
+                reportRepo.countBySite(siteId, previousFrom, previousTo, shift).collectList(),
+                reportRepo.countByDay(siteId, effectiveFrom, effectiveTo, shift).collectList(),
+                reportRepo.countByZone(siteId, effectiveFrom, effectiveTo, shift).collectList(),
+                reportRepo.countByHour(siteId, effectiveFrom, effectiveTo, shift).collectList())
+                .map(t -> new MainAggregates(t.getT1(), t.getT2(), t.getT3(), t.getT4(), t.getT5(),
+                        zeroFillDays(t.getT6(), rangeStart, rangeEnd), t.getT7(), zeroFillHours(t.getT8())));
 
-        Mono<Tuple2<List<WorkerCount>, NotificationHealth>> extras = Mono.zip(
-                reportRepo.topWorkers(siteId, effectiveFrom, effectiveTo, TOP_WORKERS_LIMIT).collectList(),
-                reportRepo.notificationHealth(siteId, effectiveFrom, effectiveTo));
+        Mono<ExtraAggregates> extras = Mono.zip(
+                reportRepo.topWorkers(siteId, effectiveFrom, effectiveTo, TOP_WORKERS_LIMIT, shift).collectList(),
+                reportRepo.notificationHealth(siteId, effectiveFrom, effectiveTo, shift),
+                reportRepo.countByWeekday(siteId, effectiveFrom, effectiveTo, shift).collectList(),
+                reportRepo.countByZoneHour(siteId, effectiveFrom, effectiveTo, shift).collectList())
+                .map(t -> new ExtraAggregates(t.getT1(), t.getT2(), zeroFillWeekdays(t.getT3()), t.getT4()));
 
-        return aggregates.zipWith(extras).map(combined -> {
-            RawAggregates agg = combined.getT1();
-            List<WorkerCount> topWorkers = combined.getT2().getT1();
-            NotificationHealth notifications = combined.getT2().getT2();
-
-            ReportSummary summary = buildSummary(agg.total(), agg.previousTotal(), agg.bySite());
-            return new ReportResult(summary, agg.byEppType(), agg.bySite(), agg.dailyTrend(), agg.byZone(),
-                    topWorkers, notifications);
-        });
+        return main.zipWith(extras).flatMap(p -> attachCritical(
+                siteId, effectiveFrom, effectiveTo, shift, p.getT1(), p.getT2()));
     }
 
-    /** Resultado crudo de las 6 agregaciones que se disparan en paralelo — reemplaza el Tuple6 posicional. */
-    private record RawAggregates(long total, long previousTotal, List<CategoryCount> byEppType,
-                                  List<CategoryCount> bySite, List<DailyCount> dailyTrend,
-                                  List<ZoneCount> byZone) {}
-
-    private ReportSummary buildSummary(long total, long previousTotal, List<CategoryCount> bySite) {
-        CategoryCount critical = bySite.stream().filter(c -> c.total() > 0).findFirst().orElse(null);
-
-        Double trendPct;
-        String trendDirection;
-        if (previousTotal == 0 && total == 0) {
-            trendPct = 0.0;
-            trendDirection = "FLAT";
-        } else if (previousTotal == 0) {
-            // Sin base en el periodo anterior no hay un "%" honesto que mostrar,
-            // pero la dirección (subió) sigue siendo verdad.
-            trendPct = null;
-            trendDirection = "UP";
-        } else {
-            double rawPct = Math.abs(total - previousTotal) * 100.0 / previousTotal;
-            trendPct = Math.round(rawPct * 10) / 10.0;
-            trendDirection = total > previousTotal ? "UP" : total < previousTotal ? "DOWN" : "FLAT";
+    private Mono<ReportResult> attachCritical(Long siteId, LocalDateTime from, LocalDateTime to, ReportShift shift,
+            MainAggregates main, ExtraAggregates extras) {
+        CategoryCount critical = main.bySite().stream().filter(c -> c.total() > 0).findFirst().orElse(null);
+        if (critical == null) {
+            return Mono.just(new ReportResult(buildSummary(main.total(), main.previousTotal(), main.bySite()),
+                    main.byEppType(), main.bySite(), main.dailyTrend(), main.byZone(), extras.topWorkers(),
+                    extras.notifications(), main.hourlyCounts(), extras.weekdayCounts(), extras.zoneHour(), null));
         }
-
-        return new ReportSummary(
-                total,
-                critical != null ? critical.label() : null,
-                critical != null ? critical.total() : 0,
-                trendPct,
-                trendDirection);
+        long previousTotal = main.bySitePrev().stream().filter(c -> c.label().equals(critical.label()))
+                .mapToLong(CategoryCount::total).findFirst().orElse(0L);
+        Mono<Optional<String>> topEpp = reportRepo.topEppForSite(critical.label(), from, to, shift)
+                .map(Optional::of).defaultIfEmpty(Optional.empty());
+        Mono<Optional<String>> topZone = reportRepo.topZoneForSite(critical.label(), from, to, shift)
+                .map(Optional::of).defaultIfEmpty(Optional.empty());
+        return Mono.zip(topEpp, topZone).map(t -> new ReportResult(
+                buildSummary(main.total(), main.previousTotal(), main.bySite()), main.byEppType(), main.bySite(),
+                main.dailyTrend(), main.byZone(), extras.topWorkers(), extras.notifications(), main.hourlyCounts(),
+                extras.weekdayCounts(), extras.zoneHour(), new CriticalDetail(critical.label(), critical.total(),
+                        t.getT1().orElse(null), t.getT2().orElse(null),
+                        variationPct(critical.total(), previousTotal))));
     }
 
-    private List<DailyCount> zeroFillDays(List<DailyCount> raw, LocalDate start, LocalDate end) {
-        Map<LocalDate, Long> byDay = new HashMap<>();
-        for (DailyCount dc : raw) {
-            byDay.put(dc.day(), dc.total());
-        }
-        List<DailyCount> filled = new ArrayList<>();
-        for (LocalDate day = start; !day.isAfter(end); day = day.plusDays(1)) {
-            filled.add(new DailyCount(day, byDay.getOrDefault(day, 0L)));
-        }
-        return filled;
-    }
+    /** Agregados base (8 consultas en paralelo) — reemplaza el Tuple8 posicional. */
+    private record MainAggregates(long total, long previousTotal, List<CategoryCount> byEppType,
+            List<CategoryCount> bySite, List<CategoryCount> bySitePrev, List<DailyCount> dailyTrend,
+            List<ZoneCount> byZone, List<HourlyCount> hourlyCounts) {}
+
+    /** Agregados extra (4 consultas en paralelo). */
+    private record ExtraAggregates(List<WorkerCount> topWorkers, NotificationHealth notifications,
+            List<WeekdayCount> weekdayCounts, List<ZoneHourCount> zoneHour) {}
 }

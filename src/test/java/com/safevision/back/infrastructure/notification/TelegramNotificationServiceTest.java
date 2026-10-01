@@ -231,4 +231,37 @@ class TelegramNotificationServiceTest {
 
         assertThat(attempts.get()).isEqualTo(1);
     }
+
+    // ── HU12: mensaje de texto del reporte diario ────────────────────
+
+    @Test
+    @DisplayName("HU12 — sendTextMessage → POST a /bot{token}/sendMessage completa sin error")
+    void sendTextMessage_mensajeDeTexto_completaSinError() {
+        ExchangeFunction exchangeFunction = request -> {
+            capturedRequest.set(request);
+            return Mono.just(ClientResponse.create(HttpStatus.OK).build());
+        };
+        TelegramNotificationService service = buildService(exchangeFunction);
+
+        StepVerifier.create(service.sendTextMessage("chat-1", "Reporte diario: 2 incumplimientos"))
+                .verifyComplete();
+
+        assertThat(capturedRequest.get().method().name()).isEqualTo("POST");
+        assertThat(capturedRequest.get().url().toString())
+                .isEqualTo("https://api.telegram.org/bot" + properties.botToken() + "/sendMessage");
+    }
+
+    @Test
+    @DisplayName("HU12 — sendTextMessage con 500 persistente: reintenta y propaga el error")
+    void sendTextMessage_500Persistente_reintentaYPropaga() {
+        AtomicInteger attempts = new AtomicInteger();
+        TelegramNotificationService service = buildService(
+                respondingInOrder(attempts, HttpStatus.INTERNAL_SERVER_ERROR));
+
+        StepVerifier.create(service.sendTextMessage("chat-1", "Reporte diario"))
+                .expectErrorSatisfies(ex -> assertThat(ex.getMessage()).contains("500"))
+                .verify();
+
+        assertThat(attempts.get()).isEqualTo(1 + TelegramNotificationService.MAX_RETRIES);
+    }
 }

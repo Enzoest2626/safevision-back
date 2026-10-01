@@ -22,8 +22,8 @@ import java.util.List;
 @Service
 public class EppParameterService {
 
-    /** Mismo default que {@code ComplianceTracker.DEFAULT_COOLDOWN_SECONDS} en el CV. */
-    private static final int DEFAULT_COOLDOWN_SECONDS = 60;
+    /** Default de 30 s, igual que {@code ComplianceTracker.DEFAULT_COOLDOWN_SECONDS} en el CV. */
+    private static final int DEFAULT_COOLDOWN_SECONDS = 30;
 
     private final EppParameterRepositoryPort eppRepo;
     private final SiteEppRequirementRepositoryPort siteEppRepo;

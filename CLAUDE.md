@@ -279,18 +279,55 @@ construir la pantalla de gestión de usuarios del frontend).
 
 | Método | Endpoint            | Descripción                                       |
 |--------|----------------------|-----------------------------------------------------|
-| GET    | `/api/v1/reports`    | Reporte agregado de incidentes (filtros opcionales `siteId`, `from`, `to`; default últimos 30 días) |
+| GET    | `/api/v1/reports`    | Reporte agregado de incidentes (filtros opcionales `siteId`, `from`, `to`, `shift=morning\|afternoon`; default últimos 30 días) |
 
 `ReportController` → `ReportService` → `ReportRepositoryPort` (implementado
 por `ReportQueryRepository`, único adaptador del repo que usa
 `DatabaseClient` en vez de `ReactiveCrudRepository` — no hay una entidad
 "reporte" que persistir, son proyecciones de solo lectura con `GROUP BY`
-sobre `incidents`/`sites`/`zones`/`workers`/`notifications`). Devuelve:
-total de incidentes, desglose por tipo de EPP faltante (`unnest(missing_epp)`),
-por obra, por zona, tendencia diaria (rellenada con ceros los días sin
-incidentes), top 5 trabajadores con más incidentes, tendencia vs. periodo
-anterior, obra con más incidentes, y salud de notificaciones Telegram
-(enviadas vs. fallidas, join contra `notification_statuses`).
+sobre `incidents`/`sites`/`zones`/`workers`/`notifications`). El detalle del
+dashboard vive en `ReportDetailQueries` (hora, día de semana, heatmap,
+dominantes) y `ReportNotificationQueries` (salud de notificaciones) —
+`ReportQueryRepository` solo delega esos métodos para no pasar las 150
+líneas por clase. Devuelve: total de incidentes, desglose por tipo de EPP
+faltante (`unnest(missing_epp)`), por obra, por zona, tendencia diaria
+(rellenada con ceros los días sin incidentes), top 5 trabajadores con más
+incidentes, tendencia vs. periodo anterior, obra con más incidentes, salud
+de notificaciones Telegram (enviadas vs. fallidas, join contra
+`notification_statuses`) y los agregados del dashboard:
+
+- `hourlyCounts`: 24 entradas `{"hour":0-23,"total":N}` con zero-fill (hora
+  del servidor; en prod Lima).
+- `weekdayCounts`: 7 entradas `{"weekday":1-7 (1=Monday),"total":N}`.
+- `zoneHour`: heatmap `[{"zone":"nombre","hour":0-23,"total":N}]`, solo
+  celdas no-cero.
+- `criticalDetail`: explica la obra crítica —
+  `{"site":"nombre","total":N,"topEpp":"helmet","topZone":"nombre",
+  "variationPct":X}` (EPP dominante, zona dominante, variación % vs.
+  periodo anterior; null cuando no hay obra con incidentes).
+- `notifications`: además de `total`/`failed`, trae `lastFailedAt` (ISO o
+  null) y `failingSites` (obras con ≥1 FAILED en el periodo, para accionar).
+
+```json
+// GET /api/v1/reports?shift=morning — fragmento de data
+{"hourlyCounts": [{"hour": 0, "total": 0}, "...", {"hour": 8, "total": 3}],
+ "weekdayCounts": [{"weekday": 1, "total": 5}, "..."],
+ "zoneHour": [{"zone": "Piso 2", "hour": 8, "total": 3}],
+ "criticalDetail": {"site": "Torre Central", "total": 7, "topEpp": "helmet",
+   "topZone": "Piso 2", "variationPct": 40.0},
+ "notifications": {"total": 10, "failed": 2, "lastFailedAt": "2026-08-05T10:30:00",
+   "failingSites": ["Torre Central"]}}
+```
+
+**Turnos (`shift`, ver docs/ALCANCE.md):** solo mañana y tarde — el turno
+noche está excluido del sistema. `morning` = horas 06:00–11:59,
+`afternoon` = 12:00–20:59 (constantes en `ReportShift`, filtro SQL sobre
+`incidents.occurred_at`). Otro valor → 400.
+
+Sin identificación de personas (ver docs/ALCANCE.md): los agregados nuevos
+son por obra, zona, hora y turno. El `topWorkers` preexistente no se
+extiende ni se expone con más detalle — pendiente con el PO si se degrada
+a agregado anónimo.
 
 **Deliberadamente sin "% de cumplimiento EPP":** el esquema solo tiene
 `incidents` (violaciones); no existe una tabla de "chequeos conformes", así
@@ -298,6 +335,24 @@ que no hay denominador real con el que calcular un porcentaje de
 cumplimiento — agregarlo sería inventar un número. Si en el futuro el
 módulo CV empieza a reportar también frames conformes (no solo
 incumplimientos), ahí recién tendría sentido esta métrica.
+
+Reporte diario automático (`ReportSchedulerService`, programado con
+`@Scheduled(cron="${app.reports.daily-cron:0 55 23 * * *}", zone="America/Lima")`,
+bean que solo existe si `app.reports.daily-enabled=true`): por cada obra
+activa lista los eventos del día (`IncidentRepositoryPort.countByFilter` +
+`findByFilterPaged` con siteId/from/to) y manda por Telegram
+(`NotificationChannelPort.sendTextMessage`, Bot API `sendMessage`) el total,
+el agregado por EPP y una línea por evento (hora, cámara, EPP faltante —
+texto armado por `DailyReportMessage`); día vacío → mensaje explícito de
+"sin incumplimientos". Destinatarios con la misma regla del aviso por
+incidente (contactos de la obra con telegram, fallback al chat global) y cada
+envío se registra en `notifications` como SENT/FAILED (una fila por incidente
+cubierto — día vacío no registra porque `notifications.incident_id` es NOT
+NULL), sin propagar el error al scheduler. Nace APAGADO en todos los perfiles
+(`REPORTS_DAILY_ENABLED` default false en `application-prd.yml` y en
+`application-dev.yml`); se enciende solo con `REPORTS_DAILY_ENABLED=true`.
+En tests la propiedad no existe y el bean no se crea
+(`matchIfMissing=false`).
 
 ### Autenticación
 
@@ -706,6 +761,11 @@ TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHAT_ID=
 TELEGRAM_LINKING_POLL_INTERVAL_MS=900000   # Intervalo del polling de vinculación (TelegramLinkingPoller), default 15 min
 
+# Reporte diario automático (HU12 — ReportSchedulerService, zona America/Lima)
+# Nace APAGADO por defecto; se enciende con REPORTS_DAILY_ENABLED=true
+REPORTS_DAILY_ENABLED=false    # En tests la propiedad no existe (scheduler apagado)
+REPORTS_DAILY_CRON=0 55 23 * * *   # default 23:55
+
 # Seguridad
 ALERT_SERVICE_TOKEN=    # Bearer token que valida el módulo CV (endpoints /api/v1/incidents y /api/v1/cv/**)
 JWT_SECRET=              # Firma los JWT de /api/v1/auth/login — mínimo 32 bytes, nunca commitear el valor real
@@ -905,3 +965,5 @@ feat(setup): inicializa proyecto con dependencias y configuración base
 - [x] `incidents.external_id` — correlaciona el aviso de clip (llega después) con el incidente ya persistido
 - [x] Obras/zonas/cámaras con `code` inmutable (autogenerado o validado contra duplicados) — identificador de negocio estable que el CV manda en cada evento
 - [x] `infra/cloudformation/safevision-stack-mqtt.yaml` (CloudFormation viejo, seguía aprovisionando un `mosquitto` que ya no hacía falta) eliminado — `infra/deploy.sh`/`infra/README.md` ya apuntaban únicamente a `safevision-stack.yaml` (el stack HTTP sin broker), no hacía falta tocarlos
+- [x] Cooldown EPP por defecto 30 s (HU07) — `SiteService`/`EppParameterService` (`DEFAULT_COOLDOWN_SECONDS`), `docs/init-schema.sql` (`DEFAULT 30`) y `COOLDOWN_SECONDS=30` del CV en `infra/cloudformation/safevision-stack.yaml`
+- [x] Reporte diario automático por Telegram (HU12, CA1/CA2) — `ReportSchedulerService` + `DailyReportMessage` (texto en español: total, agregado por EPP, línea por evento; día vacío → "sin incumplimientos") + `NotificationChannelPort.sendTextMessage` (Bot API `sendMessage`); config `app.reports.daily-enabled/daily-cron` (prd false, dev false, tests ausente; se enciende con `REPORTS_DAILY_ENABLED=true`)

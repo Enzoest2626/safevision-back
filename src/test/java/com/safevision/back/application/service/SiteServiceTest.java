@@ -109,6 +109,8 @@ class SiteServiceTest {
                 .verifyComplete();
 
         verify(siteRepository, never()).existsByCode(any());
+        // HU07: la obra nueva arranca con el cooldown por defecto (30 s).
+        verify(siteRepository).save(argThat(s -> s.cooldownSeconds() != null && s.cooldownSeconds() == 30));
     }
 
     @Test

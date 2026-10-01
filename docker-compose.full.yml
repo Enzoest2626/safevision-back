@@ -18,6 +18,7 @@
 # Variables opcionales (crear .env en la raiz, ver .env.example):
 #   CV_REPO_PATH, FRONTEND_REPO_PATH   rutas a los repos hermanos
 #   ALERT_SERVICE_TOKEN, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+#   REPORTS_DAILY_ENABLED, REPORTS_DAILY_CRON   reporte diario HU12 (apagado por defecto)
 #   FLASK_SECRET_KEY
 #   S3_BUCKET, AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
 #     (bucket real de AWS — no hay S3 local en este compose. El CV solo
@@ -63,6 +64,8 @@ services:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       TELEGRAM_LINKING_POLL_INTERVAL_MS: ${TELEGRAM_LINKING_POLL_INTERVAL_MS:-900000}
+      REPORTS_DAILY_ENABLED: ${REPORTS_DAILY_ENABLED:-false}
+      REPORTS_DAILY_CRON: ${REPORTS_DAILY_CRON:-0 55 23 * * *}
       CV_WEBHOOK_PORT: ${CV_WEBHOOK_PORT:-5001}
       S3_BUCKET: ${S3_BUCKET:-}
       AWS_REGION: ${AWS_REGION:-us-east-1}
@@ -115,7 +118,13 @@ services:
       ALERT_SERVICE_TOKEN: ${ALERT_SERVICE_TOKEN:-dev-token}
       SITE_NAME: Obra-Principal
       CAMERA_ID: CAM-01
+      # Demo local: cooldown corto para ver re-alertas sin esperar 30s.
+      # (Default del codigo y del backend: 30s; el backend lo empuja al CV
+      # en cada cambio de parametros.)
       COOLDOWN_SECONDS: "${COOLDOWN_SECONDS:-6}"
+      # Umbral temporal HU06 (default 0.5s en codigo; solo documentado aqui
+      # para pruebas: VIOLATION_MIN_SECONDS=0.12 ~= 3 frames a 25fps).
+      VIOLATION_MIN_SECONDS: "${VIOLATION_MIN_SECONDS:-0.5}"
       MODEL_PATH: models/yolov11s/exp3/weights/best.pt
       CLIP_ENABLED: "true"
       S3_BUCKET: ${S3_BUCKET:-}

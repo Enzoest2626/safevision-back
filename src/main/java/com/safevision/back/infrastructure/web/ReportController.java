@@ -30,16 +30,20 @@ public class ReportController {
 
     @GetMapping
     @Operation(summary = "Reporte agregado de incidentes",
-               description = "Filtros opcionales por obra y rango de fechas (default: últimos 30 días). "
-                       + "Solo agrega conteos reales de incidents/sites/zones/workers/notifications — "
-                       + "no incluye 'cumplimiento %' porque el sistema no registra chequeos conformes, "
-                       + "solo violaciones.",
+               description = "Filtros opcionales por obra, rango de fechas (default: últimos 30 días) y turno "
+                       + "(`shift=morning|afternoon`; mañana 06:00–11:59, tarde 12:00–20:59 — ver docs/ALCANCE.md, "
+                       + "sin turno noche). Solo agrega conteos reales de incidents/sites/zones/workers/"
+                       + "notifications — no incluye 'cumplimiento %' porque el sistema no registra chequeos "
+                       + "conformes, solo violaciones. Sin identificación de personas (ver docs/ALCANCE.md): "
+                       + "los agregados son por obra, zona, hora y turno.",
                security = @SecurityRequirement(name = "bearerAuth"))
     @ApiResponse(responseCode = "200", description = "Reporte generado")
+    @ApiResponse(responseCode = "400", description = "shift inválido (solo morning|afternoon)")
     public Mono<ApiEnvelope<ReportResult>> get(
             @RequestParam(required = false) Long siteId,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime from,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime to) {
-        return ApiEnvelope.wrap(reportService.buildReport(siteId, from, to), HttpStatus.OK);
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime to,
+            @RequestParam(required = false) String shift) {
+        return ApiEnvelope.wrap(reportService.buildReport(siteId, from, to, shift), HttpStatus.OK);
     }
 }
