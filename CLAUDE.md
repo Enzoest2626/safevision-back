@@ -196,6 +196,14 @@ va envuelta en el mismo sobre — estándar acordado con el frontend:
 
 ---
 
+## Entidades del Dominio
+
+`Site`, `Zone`, `Camera`, `Worker`, `User`, `UserRole`, `SiteContact`,
+`EppParameter`, `SiteEppRequirement`, `SiteEppConfigVersion`, `Incident`, `Evidence`, `Notification`,
+`NotificationChannel`, `NotificationStatus` (`Long` IDENTITY; `incidents.external_id` es UUID de correlación).
+
+---
+
 ## API Endpoints
 
 El prefijo `/api/v1` no se repite en cada `@RequestMapping` — es
