@@ -103,9 +103,12 @@ class ReportSchedulerServiceTest {
         assertThat(text.getValue())
                 .contains("Main-Site")
                 .contains("Total de incumplimientos: 2")
-                .contains("helmet").contains("vest")
-                .contains("Entrada")
-                .contains("08:12").contains("09:45");
+                .contains("Por EPP")
+                .contains("helmet: 1").contains("vest: 1")
+                .contains("Por cámara")
+                .contains("Entrada: 2")
+                // El detalle por evento vive en /alertas, no en el reporte diario.
+                .doesNotContain("08:12").doesNotContain("09:45");
         verify(notificationRepo, times(2)).save(argThat(n ->
                 n.statusId().equals(sentStatus.id()) && n.sentAt() != null));
     }
