@@ -169,6 +169,8 @@ class EppParameterServiceTest {
                     System.out.println("Fallback a catálogo global => PASA");
 
                     assertThat(response.requiredEpp()).hasSize(3);
+                    // Sin fila en sites → el fallback usa el default HU07 (30 s).
+                    assertThat(response.cooldownSeconds()).isEqualTo(30);
                 })
                 .verifyComplete();
     }
