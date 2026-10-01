@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.safevision.back.application.dto.report.CriticalDetail;
 import com.safevision.back.application.dto.report.NotificationHealth;
 import com.safevision.back.application.dto.report.ReportResult;
 import com.safevision.back.application.dto.report.ReportSummary;
@@ -42,13 +43,15 @@ class ReportControllerTest {
         return new ReportResult(
                 new ReportSummary(5, "Torre Central", 3, 25.0, "UP"),
                 List.of(), List.of(), List.of(), List.of(), List.of(),
-                new NotificationHealth(5, 1));
+                new NotificationHealth(5, 1, null, List.of()),
+                List.of(), List.of(), List.of(),
+                new CriticalDetail("Torre Central", 3, "helmet", "Piso 2", 50.0));
     }
 
     @Test
     @DisplayName("GET /api/v1/reports sin filtros retorna 200 con el reporte")
     void get_sinFiltros_retorna200() {
-        when(service.buildReport(isNull(), isNull(), isNull())).thenReturn(Mono.just(sampleResult()));
+        when(service.buildReport(isNull(), isNull(), isNull(), isNull())).thenReturn(Mono.just(sampleResult()));
 
         client.get().uri("/reports")
                 .exchange()
@@ -57,13 +60,15 @@ class ReportControllerTest {
                 .value(envelope -> {
                     org.assertj.core.api.Assertions.assertThat(envelope.error()).isFalse();
                     org.assertj.core.api.Assertions.assertThat(envelope.data().summary().totalIncidents()).isEqualTo(5);
+                    org.assertj.core.api.Assertions.assertThat(envelope.data().criticalDetail().site())
+                            .isEqualTo("Torre Central");
                 });
     }
 
     @Test
     @DisplayName("GET /api/v1/reports con siteId y rango de fechas los propaga al service")
     void get_conFiltros_losPropagaAlService() {
-        when(service.buildReport(eq(7L), any(LocalDateTime.class), any(LocalDateTime.class)))
+        when(service.buildReport(eq(7L), any(LocalDateTime.class), any(LocalDateTime.class), isNull()))
                 .thenReturn(Mono.just(sampleResult()));
 
         client.get().uri("/reports?siteId=7&from=2026-08-01T00:00:00&to=2026-08-07T23:59:00")
@@ -71,6 +76,20 @@ class ReportControllerTest {
                 .expectStatus().isOk();
 
         verify(service).buildReport(eq(7L),
-                eq(LocalDateTime.of(2026, 8, 1, 0, 0)), eq(LocalDateTime.of(2026, 8, 7, 23, 59)));
+                eq(LocalDateTime.of(2026, 8, 1, 0, 0)), eq(LocalDateTime.of(2026, 8, 7, 23, 59)), isNull());
+    }
+
+    @Test
+    @DisplayName("GET /api/v1/reports con shift lo propaga al service")
+    void get_conShift_loPropagaAlService() {
+        when(service.buildReport(isNull(), any(LocalDateTime.class), any(LocalDateTime.class), eq("morning")))
+                .thenReturn(Mono.just(sampleResult()));
+
+        client.get().uri("/reports?from=2026-08-01T00:00:00&to=2026-08-07T23:59:00&shift=morning")
+                .exchange()
+                .expectStatus().isOk();
+
+        verify(service).buildReport(isNull(),
+                eq(LocalDateTime.of(2026, 8, 1, 0, 0)), eq(LocalDateTime.of(2026, 8, 7, 23, 59)), eq("morning"));
     }
 }

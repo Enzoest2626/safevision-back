@@ -9,5 +9,9 @@ public record ReportResult(
         List<DailyCount> dailyTrend,
         List<ZoneCount> byZone,
         List<WorkerCount> topWorkers,
-        NotificationHealth notifications
+        NotificationHealth notifications,
+        List<HourlyCount> hourlyCounts,
+        List<WeekdayCount> weekdayCounts,
+        List<ZoneHourCount> zoneHour,
+        CriticalDetail criticalDetail
 ) {}

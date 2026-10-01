@@ -279,18 +279,55 @@ construir la pantalla de gestión de usuarios del frontend).
 
 | Método | Endpoint            | Descripción                                       |
 |--------|----------------------|-----------------------------------------------------|
-| GET    | `/api/v1/reports`    | Reporte agregado de incidentes (filtros opcionales `siteId`, `from`, `to`; default últimos 30 días) |
+| GET    | `/api/v1/reports`    | Reporte agregado de incidentes (filtros opcionales `siteId`, `from`, `to`, `shift=morning\|afternoon`; default últimos 30 días) |
 
 `ReportController` → `ReportService` → `ReportRepositoryPort` (implementado
 por `ReportQueryRepository`, único adaptador del repo que usa
 `DatabaseClient` en vez de `ReactiveCrudRepository` — no hay una entidad
 "reporte" que persistir, son proyecciones de solo lectura con `GROUP BY`
-sobre `incidents`/`sites`/`zones`/`workers`/`notifications`). Devuelve:
-total de incidentes, desglose por tipo de EPP faltante (`unnest(missing_epp)`),
-por obra, por zona, tendencia diaria (rellenada con ceros los días sin
-incidentes), top 5 trabajadores con más incidentes, tendencia vs. periodo
-anterior, obra con más incidentes, y salud de notificaciones Telegram
-(enviadas vs. fallidas, join contra `notification_statuses`).
+sobre `incidents`/`sites`/`zones`/`workers`/`notifications`). El detalle del
+dashboard vive en `ReportDetailQueries` (hora, día de semana, heatmap,
+dominantes) y `ReportNotificationQueries` (salud de notificaciones) —
+`ReportQueryRepository` solo delega esos métodos para no pasar las 150
+líneas por clase. Devuelve: total de incidentes, desglose por tipo de EPP
+faltante (`unnest(missing_epp)`), por obra, por zona, tendencia diaria
+(rellenada con ceros los días sin incidentes), top 5 trabajadores con más
+incidentes, tendencia vs. periodo anterior, obra con más incidentes, salud
+de notificaciones Telegram (enviadas vs. fallidas, join contra
+`notification_statuses`) y los agregados del dashboard:
+
+- `hourlyCounts`: 24 entradas `{"hour":0-23,"total":N}` con zero-fill (hora
+  del servidor; en prod Lima).
+- `weekdayCounts`: 7 entradas `{"weekday":1-7 (1=Monday),"total":N}`.
+- `zoneHour`: heatmap `[{"zone":"nombre","hour":0-23,"total":N}]`, solo
+  celdas no-cero.
+- `criticalDetail`: explica la obra crítica —
+  `{"site":"nombre","total":N,"topEpp":"helmet","topZone":"nombre",
+  "variationPct":X}` (EPP dominante, zona dominante, variación % vs.
+  periodo anterior; null cuando no hay obra con incidentes).
+- `notifications`: además de `total`/`failed`, trae `lastFailedAt` (ISO o
+  null) y `failingSites` (obras con ≥1 FAILED en el periodo, para accionar).
+
+```json
+// GET /api/v1/reports?shift=morning — fragmento de data
+{"hourlyCounts": [{"hour": 0, "total": 0}, "...", {"hour": 8, "total": 3}],
+ "weekdayCounts": [{"weekday": 1, "total": 5}, "..."],
+ "zoneHour": [{"zone": "Piso 2", "hour": 8, "total": 3}],
+ "criticalDetail": {"site": "Torre Central", "total": 7, "topEpp": "helmet",
+   "topZone": "Piso 2", "variationPct": 40.0},
+ "notifications": {"total": 10, "failed": 2, "lastFailedAt": "2026-08-05T10:30:00",
+   "failingSites": ["Torre Central"]}}
+```
+
+**Turnos (`shift`, ver docs/ALCANCE.md):** solo mañana y tarde — el turno
+noche está excluido del sistema. `morning` = horas 06:00–11:59,
+`afternoon` = 12:00–20:59 (constantes en `ReportShift`, filtro SQL sobre
+`incidents.occurred_at`). Otro valor → 400.
+
+Sin identificación de personas (ver docs/ALCANCE.md): los agregados nuevos
+son por obra, zona, hora y turno. El `topWorkers` preexistente no se
+extiende ni se expone con más detalle — pendiente con el PO si se degrada
+a agregado anónimo.
 
 **Deliberadamente sin "% de cumplimiento EPP":** el esquema solo tiene
 `incidents` (violaciones); no existe una tabla de "chequeos conformes", así
