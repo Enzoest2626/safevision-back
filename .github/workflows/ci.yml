@@ -33,6 +33,9 @@ jobs:
   # ── Reglas no negociables de AGENTS.md (verificables en el PR) ─────────
   guards:
     name: guards
+    # Pipeline pesado solo en develop (y en push). Los PRs de promoción
+    # (develop -> release -> main) no lo repiten: develop ya lo validó.
+    if: github.event_name != 'pull_request' || github.base_ref == 'develop'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -116,6 +119,7 @@ jobs:
   # ── Build + lint + format + tests + cobertura ──────────────────────────
   build-test:
     name: build-test
+    if: github.event_name != 'pull_request' || github.base_ref == 'develop'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -155,6 +159,7 @@ jobs:
   # ── Escaneo de secretos ────────────────────────────────────────────────
   secrets-scan:
     name: secrets-scan
+    if: github.event_name != 'pull_request' || github.base_ref == 'develop'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -176,7 +181,9 @@ jobs:
     # Ultimo en correr: solo si build-test y secrets-scan pasaron.
     # (pr-title no se incluye porque en push se salta y arrastraria este job con el.)
     # No quemar minutos en drafts. Solo valida que la imagen construye, sin push.
-    if: github.event.pull_request.draft == false
+    # Solo en develop y en push (los PRs de promoción no repiten el pipeline),
+    # y nunca en drafts. Corre ultimo y solo valida que la imagen construye.
+    if: (github.event_name != 'pull_request' || github.base_ref == 'develop') && !(github.event_name == 'pull_request' && github.event.pull_request.draft)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     needs: [build-test, secrets-scan]
@@ -194,3 +201,30 @@ jobs:
           tags: safevision-back:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # ── Guardia de promocion (unico check requerido en release/main) ───────
+  # GitHub no restringe la rama de origen de un PR de forma nativa, asi que
+  # se valida aca: release solo acepta PRs desde develop, main solo desde
+  # release. Los rulesets de release/main exigen unicamente este check.
+  promotion-guard:
+    name: promotion-guard
+    if: github.event_name == 'pull_request' && (github.base_ref == 'release' || github.base_ref == 'main')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Validar rama de origen
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="${{ github.base_ref }}"
+          HEAD="${{ github.head_ref }}"
+          case "$BASE" in
+            release) EXPECTED="develop" ;;
+            main)    EXPECTED="release" ;;
+            *) echo "::error::Rama base inesperada: $BASE"; exit 1 ;;
+          esac
+          if [ "$HEAD" != "$EXPECTED" ]; then
+            echo "::error::Solo '$EXPECTED' puede promoverse a '$BASE' (recibido: '$HEAD')."
+            exit 1
+          fi
+          echo "Promocion $HEAD -> $BASE OK."
