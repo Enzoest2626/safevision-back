@@ -20,6 +20,7 @@ import java.time.Duration;
 import java.time.format.DateTimeFormatter;
 import java.util.Base64;
 import java.util.Locale;
+import java.util.Map;
 
 /**
  * Adaptador de alertas — envía la evidencia del incidente EPP como foto
@@ -104,13 +105,31 @@ public class TelegramNotificationService implements NotificationChannelPort {
     }
 
     private Mono<Void> sendPhoto(MultipartBodyBuilder builder) {
-        return webClient.post()
+        return deliver(webClient.post()
                 .uri("/bot{token}/sendPhoto", properties.botToken())
                 .body(BodyInserters.fromMultipartData(builder.build()))
-                .retrieve()
-                .onStatus(HttpStatusCode::isError, response -> response.bodyToMono(String.class)
+                .retrieve());
+    }
+
+    /**
+     * Mensaje de texto sin foto (Bot API {@code sendMessage}) — usado por el
+     * reporte diario (HU12). Misma política de reintento que las fotos (CP29):
+     * 429/5xx/falla de red se reintentan, otro 4xx no.
+     */
+    @Override
+    public Mono<Void> sendTextMessage(String chatId, String text) {
+        return deliver(webClient.post()
+                .uri("/bot{token}/sendMessage", properties.botToken())
+                .bodyValue(Map.of("chat_id", chatId, "text", text, "parse_mode", "HTML"))
+                .retrieve());
+    }
+
+    /** Mapea errores HTTP a {@link TelegramApiException} y aplica el reintento con backoff. */
+    private Mono<Void> deliver(WebClient.ResponseSpec response) {
+        return response
+                .onStatus(HttpStatusCode::isError, spec -> spec.bodyToMono(String.class)
                         .defaultIfEmpty("")
-                        .flatMap(body -> Mono.error(new TelegramApiException(response.statusCode(), body))))
+                        .flatMap(body -> Mono.error(new TelegramApiException(spec.statusCode(), body))))
                 .toBodilessEntity()
                 .then()
                 .retryWhen(Retry.backoff(MAX_RETRIES, retryBackoff)

@@ -20,6 +20,9 @@ app:
     webhook-timeout-seconds: ${CV_WEBHOOK_TIMEOUT_SECONDS:5}
   telegram:
     linking-poll-interval-ms: ${TELEGRAM_LINKING_POLL_INTERVAL_MS:900000}
+  reports:
+    daily-enabled: ${REPORTS_DAILY_ENABLED:false}
+    daily-cron: ${REPORTS_DAILY_CRON:0 55 23 * * *}
   security:
     alert-service-token: ${ALERT_SERVICE_TOKEN}
     jwt-secret: ${JWT_SECRET}
