@@ -22,7 +22,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.reactive.server.WebTestClient;
 
 /**
- * CP43/CP44 — el cooldown por obra (HU07) debe ser un entero mayor a 0.
+ * CP38 — el cooldown por obra (HU07) debe ser un entero mayor a 0.
  *
  * <p>El rechazo tiene que ocurrir en la validación del request, antes de que
  * el servicio toque la base de datos: por eso se verifica que
@@ -51,14 +51,14 @@ class EppParameterCooldownValidationTest {
                 .build();
     }
 
-    // ── CP43 — cooldownSeconds = 0 ────────────────────────────────────
+    // ── CP38 — cooldownSeconds = 0 ────────────────────────────────────
 
     @Test
-    @Tag("CP43")
-    @DisplayName("CP43 — PUT con cooldownSeconds = 0 devuelve 400 VALIDATION_ERROR sin invocar al servicio")
-    void cp43_cooldownCero_retorna400SinInvocarServicio() {
+    @Tag("CP38")
+    @DisplayName("CP38 — PUT con cooldownSeconds = 0 devuelve 400 VALIDATION_ERROR sin invocar al servicio")
+    void cp38_cooldownCero_retorna400SinInvocarServicio() {
         String payload = "{\"requiredEpp\":[\"casco\"],\"cooldownSeconds\":0}";
-        System.out.println("\n[CP43] PUT /api/v1/parameters/1 con cooldownSeconds = 0 (mínimo permitido: 1):");
+        System.out.println("\n[CP38] PUT /api/v1/parameters/1 con cooldownSeconds = 0 (mínimo permitido: 1):");
 
         client.put().uri("/parameters/{siteId}", 1L)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -77,17 +77,17 @@ class EppParameterCooldownValidationTest {
                 });
 
         verify(service, never()).updateForSite(anyLong(), any(EppParameterRequest.class), anyString());
-        System.out.println("[CP43] 400 con VALIDATION_ERROR y servicio nunca invocado => PASA");
+        System.out.println("[CP38] 400 con VALIDATION_ERROR y servicio nunca invocado => PASA");
     }
 
-    // ── CP44 — cooldownSeconds = -10 ──────────────────────────────────
+    // ── CP38 — cooldownSeconds = -10 ──────────────────────────────────
 
     @Test
-    @Tag("CP44")
-    @DisplayName("CP44 — PUT con cooldownSeconds = -10 devuelve 400 VALIDATION_ERROR sin invocar al servicio")
-    void cp44_cooldownNegativo_retorna400SinInvocarServicio() {
+    @Tag("CP38")
+    @DisplayName("CP38 — PUT con cooldownSeconds = -10 devuelve 400 VALIDATION_ERROR sin invocar al servicio")
+    void cp38_cooldownNegativo_retorna400SinInvocarServicio() {
         String payload = "{\"requiredEpp\":[\"casco\"],\"cooldownSeconds\":-10}";
-        System.out.println("\n[CP44] PUT /api/v1/parameters/1 con cooldownSeconds = -10 (negativo):");
+        System.out.println("\n[CP38] PUT /api/v1/parameters/1 con cooldownSeconds = -10 (negativo):");
 
         client.put().uri("/parameters/{siteId}", 1L)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -106,6 +106,6 @@ class EppParameterCooldownValidationTest {
                 });
 
         verify(service, never()).updateForSite(anyLong(), any(EppParameterRequest.class), anyString());
-        System.out.println("[CP44] 400 con VALIDATION_ERROR y servicio nunca invocado => PASA");
+        System.out.println("[CP38] 400 con VALIDATION_ERROR y servicio nunca invocado => PASA");
     }
 }

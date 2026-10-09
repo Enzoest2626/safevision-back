@@ -45,10 +45,10 @@ class HttpRulesPublisherCooldownTest {
     private static final Long SITE_ID = 1L;
 
     @Test
-    @Tag("CP41")
-    @DisplayName("CP41 — nota solo a las cámaras con IP (2 peticiones); la cámara sin IP no recibe nada")
-    void cp41_camaraSinIp_noRecibeNotificacion() throws Exception {
-        System.out.println("[CP41] Envío del cooldown por webhook al CV — obra con CAM-01/CAM-02 (IP 127.0.0.1) y CAM-03 (sin IP)");
+    @Tag("CP37")
+    @DisplayName("CP37 — nota solo a las cámaras con IP (2 peticiones); la cámara sin IP no recibe nada")
+    void cp37_camaraSinIp_noRecibeNotificacion() throws Exception {
+        System.out.println("[CP37] Envío del cooldown por webhook al CV — obra con CAM-01/CAM-02 (IP 127.0.0.1) y CAM-03 (sin IP)");
         try (SimulatedCv cv = new SimulatedCv(2)) {
             CameraRepositoryPort cameraRepository = mock(CameraRepositoryPort.class);
             when(cameraRepository.findBySiteIdAndActiveTrue(SITE_ID)).thenReturn(Flux.just(
@@ -69,9 +69,9 @@ class HttpRulesPublisherCooldownTest {
             // margen para detectar peticiones de más tras liberarse el latch
             Thread.sleep(300);
 
-            System.out.println("[CP41] Peticiones recibidas por el CV simulado: " + cv.requestCount());
-            System.out.println("[CP41] Petición 1 | ruta=" + cv.path(0) + " | cuerpo=" + cv.body(0));
-            System.out.println("[CP41] Petición 2 | ruta=" + cv.path(1) + " | cuerpo=" + cv.body(1));
+            System.out.println("[CP37] Peticiones recibidas por el CV simulado: " + cv.requestCount());
+            System.out.println("[CP37] Petición 1 | ruta=" + cv.path(0) + " | cuerpo=" + cv.body(0));
+            System.out.println("[CP37] Petición 2 | ruta=" + cv.path(1) + " | cuerpo=" + cv.body(1));
 
             Map<String, Object> cuerpo1 = parseJson(cv.body(0));
             Map<String, Object> cuerpo2 = parseJson(cv.body(1));
@@ -88,15 +88,15 @@ class HttpRulesPublisherCooldownTest {
             assertThat(cuerpo2.get("required_epp")).as("required_epp en la petición 2")
                     .asInstanceOf(list(String.class)).containsExactlyInAnyOrder("casco", "chaleco");
 
-            System.out.println("[CP41] El CV recibió exactamente 2 peticiones a /webhook/rules con cooldown_seconds=30 y required_epp=[casco, chaleco]; CAM-03 sin IP no fue notificada => PASA");
+            System.out.println("[CP37] El CV recibió exactamente 2 peticiones a /webhook/rules con cooldown_seconds=30 y required_epp=[casco, chaleco]; CAM-03 sin IP no fue notificada => PASA");
         }
     }
 
     @Test
-    @Tag("CP42")
-    @DisplayName("CP42 — cámara inalcanzable (127.0.0.2) no lanza excepción ni bloquea la notificación de la otra")
-    void cp42_camaraInalcanzable_noLanzaExcepcion_yLaOtraRecibeCooldown() throws Exception {
-        System.out.println("[CP42] Envío del cooldown con CAM-01 inalcanzable (127.0.0.2, nadie escucha) y CAM-02 alcanzable");
+    @Tag("CP37")
+    @DisplayName("CP37 — cámara inalcanzable (127.0.0.2) no lanza excepción ni bloquea la notificación de la otra")
+    void cp37_camaraInalcanzable_noLanzaExcepcion_yLaOtraRecibeCooldown() throws Exception {
+        System.out.println("[CP37] Envío del cooldown con CAM-01 inalcanzable (127.0.0.2, nadie escucha) y CAM-02 alcanzable");
         try (SimulatedCv cv = new SimulatedCv(1)) {
             CameraRepositoryPort cameraRepository = mock(CameraRepositoryPort.class);
             when(cameraRepository.findBySiteIdAndActiveTrue(SITE_ID)).thenReturn(Flux.just(
@@ -115,8 +115,8 @@ class HttpRulesPublisherCooldownTest {
             // margen para detectar peticiones de más tras liberarse el latch
             Thread.sleep(300);
 
-            System.out.println("[CP42] Peticiones recibidas por el CV simulado: " + cv.requestCount());
-            System.out.println("[CP42] Petición 1 | ruta=" + cv.path(0) + " | cuerpo=" + cv.body(0));
+            System.out.println("[CP37] Peticiones recibidas por el CV simulado: " + cv.requestCount());
+            System.out.println("[CP37] Petición 1 | ruta=" + cv.path(0) + " | cuerpo=" + cv.body(0));
 
             Map<String, Object> cuerpo = parseJson(cv.body(0));
             assertThat(cv.requestCount()).as("peticiones al CV (exactamente 1)").isEqualTo(1);
@@ -126,7 +126,7 @@ class HttpRulesPublisherCooldownTest {
             assertThat(cuerpo.get("required_epp")).as("required_epp")
                     .asInstanceOf(list(String.class)).containsExactlyInAnyOrder("casco");
 
-            System.out.println("[CP42] La conexión rechazada de CAM-01 no lanzó excepción y el CV recibió exactamente 1 petición con cooldown_seconds=45 => PASA");
+            System.out.println("[CP37] La conexión rechazada de CAM-01 no lanzó excepción y el CV recibió exactamente 1 petición con cooldown_seconds=45 => PASA");
         }
     }
 

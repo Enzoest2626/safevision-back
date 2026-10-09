@@ -20,7 +20,7 @@ import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
 /**
- * CP45 — el cooldown por defecto (HU07): toda obra creada debe guardar
+ * CP36 — el cooldown por defecto (HU07): toda obra creada debe guardar
  * {@code cooldownSeconds = 30} desde la capa de aplicación, no solo gracias
  * al {@code DEFAULT 30} de la columna (el backend envía el valor explícito
  * y así el CV recibe siempre un cooldown conocido).
@@ -40,17 +40,17 @@ class SiteCooldownDefaultTest {
     }
 
     @Test
-    @Tag("CP45")
-    @DisplayName("CP45 — create persiste cooldownSeconds = 30 (Site.DEFAULT_COOLDOWN_SECONDS)")
-    void cp45_create_persisteCooldownPorDefecto() {
-        SiteRequest request = new SiteRequest("OBRA-CP45", "Obra CP45", "Lima");
-        when(siteRepository.existsByCode("OBRA-CP45")).thenReturn(Mono.just(false));
+    @Tag("CP36")
+    @DisplayName("CP36 — create persiste cooldownSeconds = 30 (Site.DEFAULT_COOLDOWN_SECONDS)")
+    void cp36_create_persisteCooldownPorDefecto() {
+        SiteRequest request = new SiteRequest("OBRA-CP36", "Obra CP36", "Lima");
+        when(siteRepository.existsByCode("OBRA-CP36")).thenReturn(Mono.just(false));
         when(siteRepository.save(any(Site.class))).thenAnswer(invocation -> Mono.just(invocation.getArgument(0)));
 
-        System.out.println("\n[CP45] SiteService.create — obra nueva, sin cooldownSeconds en el request:");
+        System.out.println("\n[CP36] SiteService.create — obra nueva, sin cooldownSeconds en el request:");
 
         StepVerifier.create(service.create(request, "supervisor1"))
-                .assertNext(response -> assertThat(response.name()).isEqualTo("Obra CP45"))
+                .assertNext(response -> assertThat(response.name()).isEqualTo("Obra CP36"))
                 .verifyComplete();
 
         ArgumentCaptor<Site> captor = ArgumentCaptor.forClass(Site.class);
@@ -64,6 +64,6 @@ class SiteCooldownDefaultTest {
         assertThat(guardado.cooldownSeconds()).isEqualTo(30);
         assertThat(Site.DEFAULT_COOLDOWN_SECONDS).isEqualTo(30);
 
-        System.out.println("[CP45] Obra persistida con cooldown de 30 s por defecto => PASA");
+        System.out.println("[CP36] Obra persistida con cooldown de 30 s por defecto => PASA");
     }
 }
