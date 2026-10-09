@@ -17,4 +17,8 @@ public record Site(
         String createdBy,
         LocalDateTime updatedAt,
         String updatedBy
-) {}
+) {
+
+    /** Segundos mínimos entre dos alertas de una misma cámara (HU07): default 30 s. */
+    public static final int DEFAULT_COOLDOWN_SECONDS = 30;
+}

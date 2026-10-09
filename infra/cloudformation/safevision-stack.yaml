@@ -542,7 +542,7 @@ Resources:
                 CV_WEBHOOK_PORT=${CvWebhookPort}
                 MODEL_PATH=models/yolov11s/exp3/weights/best_int8_openvino_model
                 CONFIDENCE_THRESHOLD=0.5
-                COOLDOWN_SECONDS=60
+                COOLDOWN_SECONDS=30
                 S3_BUCKET=${EvidenceBucketName}
                 S3_PREFIX=incidents
                 AWS_REGION=${AWS::Region}

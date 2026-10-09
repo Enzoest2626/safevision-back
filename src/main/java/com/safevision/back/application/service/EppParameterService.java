@@ -22,9 +22,6 @@ import java.util.List;
 @Service
 public class EppParameterService {
 
-    /** Mismo default que {@code ComplianceTracker.DEFAULT_COOLDOWN_SECONDS} en el CV. */
-    private static final int DEFAULT_COOLDOWN_SECONDS = 60;
-
     private final EppParameterRepositoryPort eppRepo;
     private final SiteEppRequirementRepositoryPort siteEppRepo;
     private final SiteEppConfigVersionRepositoryPort versionRepo;
@@ -61,7 +58,7 @@ public class EppParameterService {
                 });
         Mono<Integer> cooldownMono = siteRepo.findById(siteId)
                 .map(Site::cooldownSeconds)
-                .defaultIfEmpty(DEFAULT_COOLDOWN_SECONDS);
+                .defaultIfEmpty(Site.DEFAULT_COOLDOWN_SECONDS);
         return Mono.zip(eppParamsMono, cooldownMono)
                 .map(tuple -> new EppParameterResponse(
                         siteId,

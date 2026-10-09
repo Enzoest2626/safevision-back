@@ -115,7 +115,7 @@ services:
       ALERT_SERVICE_TOKEN: ${ALERT_SERVICE_TOKEN:-dev-token}
       SITE_NAME: Obra-Principal
       CAMERA_ID: CAM-01
-      COOLDOWN_SECONDS: "${COOLDOWN_SECONDS:-6}"
+      COOLDOWN_SECONDS: "${COOLDOWN_SECONDS:-30}"
       MODEL_PATH: models/yolov11s/exp3/weights/best.pt
       CLIP_ENABLED: "true"
       S3_BUCKET: ${S3_BUCKET:-}
