@@ -169,6 +169,7 @@ class EppParameterServiceTest {
                     System.out.println("Fallback a catálogo global => PASA");
 
                     assertThat(response.requiredEpp()).hasSize(3);
+                    assertThat(response.cooldownSeconds()).isEqualTo(30);
                 })
                 .verifyComplete();
     }

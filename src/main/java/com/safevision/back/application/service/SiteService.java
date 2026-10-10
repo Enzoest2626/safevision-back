@@ -15,9 +15,6 @@ import java.time.LocalDateTime;
 @Service
 public class SiteService {
 
-    /** Mismo default que {@code ComplianceTracker.DEFAULT_COOLDOWN_SECONDS} en el CV. */
-    private static final int DEFAULT_COOLDOWN_SECONDS = 60;
-
     private final SiteRepositoryPort siteRepository;
 
     public SiteService(SiteRepositoryPort siteRepository) {
@@ -39,7 +36,7 @@ public class SiteService {
         LocalDateTime now = LocalDateTime.now();
         return resolveCode(request.code())
                 .flatMap(code -> {
-                    Site site = new Site(null, code, request.name(), request.location(), DEFAULT_COOLDOWN_SECONDS,
+                    Site site = new Site(null, code, request.name(), request.location(), Site.DEFAULT_COOLDOWN_SECONDS,
                             true, now, createdBy, now, createdBy);
                     return siteRepository.save(site);
                 })
